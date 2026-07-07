@@ -12,26 +12,11 @@ Diferente de `delegua-llvm` (que usa bindings nativos do LLVM), este back-end us
 
 Suporta apenas:
 
-- `var` com literais (`inteiro`, `numero`, `texto`, `logico`);
-- leitura de variáveis já declaradas;
-- aritmética (`+ - * /`) entre `inteiro`/`numero`, com promoção para `float64` quando misturados (divisão sempre produz `numero`, mesmo entre inteiros);
-- comparações (`< <= > >= == !=`) entre valores primitivos suportados;
-- atribuição local (`x = ...`);
-- `se`/`senao`;
-- `enquanto`;
-- `para`;
-- `escolha`/`caso`/`padrao`;
-- `continua` e `sustar` dentro de laços;
-- funções de topo com parâmetros tipados, sem parâmetros, retorno `vazio`, `retorna`, recursão e chamadas entre funções;
-- vetores homogêneos com literais, leitura por índice e atribuição por índice;
-- vetores e dicionários com `tamanho` como propriedade e método sem argumentos;
-- vetores com `adicionar(...)` e `valores()`;
-- dicionários com `chaves()` e `valores()`;
-- dicionários com chaves primitivas homogêneas, valores homogêneos, leitura por chave e atribuição por chave;
-- operadores lógicos `e`, `ou` e `nao` no subconjunto booleano;
-- `escreva(...)` com os tipos acima.
 
-Todo o restante da gramática (classes, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
+  - Declaração de `classe` com métodos de instância.
+  - `construtor(...)` com criação via chamada da classe (`Pessoa("Ada")`).
+  - `isto` e atribuição/acesso de campos via `isto.campo` e `objeto.campo`.
+  - Chamada de método de instância (`objeto.metodo(...)`).
 
 ## Mapeamento de tipos (nesta versão)
 
@@ -44,7 +29,6 @@ Todo o restante da gramática (classes, `importar`, exceções, closures, FFI) a
 
 Os tipos são fixos e estaticamente tipados no código gerado — não há BigInt/precisão arbitrária como no interpretador dinâmico (mesma divergência deliberada adotada por `delegua-llvm`).
 
-## Uso
 
 ```bash
 yarn executar caminho/para/arquivo.delegua

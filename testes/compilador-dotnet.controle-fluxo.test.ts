@@ -513,6 +513,53 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Classe com construtor e método de instância compila', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Pessoa {',
+            '  construtor(nome: texto) { isto.nome = nome }',
+            '  falar(): texto { retorna isto.nome }',
+            '}',
+            'var p = Pessoa("Ada")',
+            'escreva(p.falar())',
+        ]);
+
+        expect(resultado).toContain('.class public auto ansi beforefieldinit Pessoa');
+        expect(resultado).toContain('.field public string nome');
+        expect(resultado).toContain('.method public hidebysig specialname rtspecialname instance void .ctor(string nome) cil managed');
+        expect(resultado).toContain('newobj instance void class Pessoa::.ctor(string)');
+        expect(resultado).toContain('callvirt instance string class Pessoa::falar()');
+    });
+
+    it('Método de instância aceita parâmetros tipados', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Pessoa {',
+            '  construtor(nome: texto) { isto.nome = nome }',
+            '  falarCom(sufixo: texto): texto { retorna sufixo }',
+            '}',
+            'var p = Pessoa("Ada")',
+            'escreva(p.falarCom("!"))',
+        ]);
+
+        expect(resultado).toContain('.method public hidebysig instance string falarCom(string sufixo) cil managed');
+        expect(resultado).toContain('callvirt instance string class Pessoa::falarCom(string)');
+    });
+
+    it('Acesso a propriedade inexistente em classe falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Pessoa {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '}',
+                'var p = Pessoa("Ada")',
+                'escreva(p.sobrenome)',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Nao lógico inverte condição booleana', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar(['se (nao falso) { escreva(7) }']);

@@ -1,0 +1,6 @@
+classe Pessoa {
+  construtor(nome: texto) { isto.nome = nome }
+  falar(): texto { retorna isto.nome }
+}
+var p = Pessoa("Ada")
+escreva(p.falar())

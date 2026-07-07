@@ -9,13 +9,16 @@ import {
     Binario,
     Bloco,
     Chamada,
+    Classe,
     Declaracao,
+    DefinirValor,
     Dicionario,
     Enquanto,
     Escolha,
     Escreva,
     Expressao,
     FuncaoDeclaracao,
+    Isto,
     Lexador,
     Literal,
     Logico,
@@ -52,6 +55,27 @@ interface FuncaoCompilada {
     parametros: ParametroCompilado[];
 }
 
+interface MetodoClasseCompilado {
+    nome: string;
+    nomeCil: string;
+    tipoRetornoDelegua: string;
+    tipoRetornoCil: string;
+    parametros: ParametroCompilado[];
+    eConstrutor: boolean;
+}
+
+interface CampoClasseCompilado {
+    nome: string;
+    tipoDelegua: string;
+    tipoCil: string;
+}
+
+interface ClasseCompilada {
+    nome: string;
+    metodos: Map<string, MetodoClasseCompilado>;
+    campos: Map<string, CampoClasseCompilado>;
+}
+
 interface EstadoCompilacao {
     instrucoes: string[];
     variaveis: Map<string, VariavelLocal>;
@@ -59,6 +83,8 @@ interface EstadoCompilacao {
     proximoIndiceLocal: number;
     pilhaRotulosLoop: Array<{ continua: string; sustar: string }>;
     funcaoAtual: FuncaoCompilada | null;
+    classeAtual: ClasseCompilada | null;
+    metodoClasseAtual: MetodoClasseCompilado | null;
 }
 
 const MAPA_TIPOS_CIL: Record<string, string> = {
@@ -89,8 +115,12 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     private proximoRotulo: number;
     private pilhaRotulosLoop: Array<{ continua: string; sustar: string }>;
     private funcoes: Map<string, FuncaoCompilada>;
+    private classes: Map<string, ClasseCompilada>;
     private metodosCompilados: string[];
+    private classesCompiladas: string[];
     private funcaoAtual: FuncaoCompilada | null;
+    private classeAtual: ClasseCompilada | null;
+    private metodoClasseAtual: MetodoClasseCompilado | null;
 
     constructor() {
         super();
@@ -106,14 +136,22 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.proximoRotulo = 0;
         this.pilhaRotulosLoop = [];
         this.funcoes = new Map();
+        this.classes = new Map();
         this.metodosCompilados = [];
+        this.classesCompiladas = [];
         this.funcaoAtual = null;
+        this.classeAtual = null;
+        this.metodoClasseAtual = null;
 
         const retornoLexador = this.lexador.mapear(codigo, -1);
         const retornoAvaliadorSintatico = await this.avaliadorSintatico.analisar(retornoLexador, -1);
         const declaracoes = retornoAvaliadorSintatico.declaracoes as Declaracao[];
 
         for (const declaracao of declaracoes) {
+            if (declaracao instanceof Classe) {
+                this.registrarClasse(declaracao);
+            }
+
             if (declaracao instanceof FuncaoDeclaracao) {
                 this.registrarAssinaturaFuncao(declaracao);
             }
@@ -146,7 +184,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             (corpo ? corpo + '\n' : '') +
             `    ret\n` +
             `}\n` +
-            (this.metodosCompilados.length ? `\n${this.metodosCompilados.join('\n\n')}\n` : '')
+            (this.metodosCompilados.length ? `\n${this.metodosCompilados.join('\n\n')}\n` : '') +
+            (this.classesCompiladas.length ? `\n${this.classesCompiladas.join('\n\n')}\n` : '')
         );
     }
 
@@ -362,7 +401,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     private construtoDeixaValorNaPilha(construto: any): boolean {
-        if (construto instanceof Atribuir || construto instanceof AtribuicaoPorIndice) {
+        if (construto instanceof Atribuir || construto instanceof AtribuicaoPorIndice || construto instanceof DefinirValor) {
             return false;
         }
 
@@ -501,6 +540,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     private mapearTipoCil(tipoDelegua: string): string {
+        if (this.classes.has(tipoDelegua)) {
+            return `class ${tipoDelegua}`;
+        }
+
         if (this.tipoEhVetor(tipoDelegua)) {
             return this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoDelegua));
         }
@@ -561,6 +604,69 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         });
     }
 
+    private extrairTipoRetornoMetodoClasse(metodo: FuncaoDeclaracao): string {
+        if (metodo.simbolo.lexema === 'construtor') {
+            return 'vazio';
+        }
+
+        const tipoExplicito = metodo.funcao.tipo;
+        if (tipoExplicito && tipoExplicito !== 'qualquer') {
+            return this.normalizarTipo(tipoExplicito);
+        }
+
+        for (const item of metodo.funcao.corpo) {
+            if (item instanceof Retorna) {
+                return this.normalizarTipo(item.tipo || 'vazio');
+            }
+        }
+
+        return 'vazio';
+    }
+
+    private registrarClasse(declaracao: Classe): void {
+        const nome = declaracao.simbolo.lexema;
+        if (this.classes.has(nome) || this.funcoes.has(nome)) {
+            throw new ErroCompilador(`Classe '${nome}' já declarada.`);
+        }
+
+        const metodos = new Map<string, MetodoClasseCompilado>();
+        for (const metodo of declaracao.metodos) {
+            const nomeMetodoOriginal = metodo.simbolo.lexema;
+            if (metodos.has(nomeMetodoOriginal)) {
+                throw new ErroCompilador(`Método '${nomeMetodoOriginal}' duplicado na classe '${nome}'.`);
+            }
+
+            const parametros = metodo.funcao.parametros.map((parametro: any) => {
+                const tipoDelegua = this.normalizarTipo(parametro.tipoDado || 'qualquer');
+                if (tipoDelegua === 'qualquer') {
+                    throw new ErroCompilador(`Método '${nomeMetodoOriginal}' da classe '${nome}' requer tipos explícitos de parâmetros.`);
+                }
+
+                return {
+                    nome: parametro.nome.lexema,
+                    tipoDelegua,
+                    tipoCil: this.mapearTipoCil(tipoDelegua),
+                };
+            });
+
+            const tipoRetornoDelegua = this.extrairTipoRetornoMetodoClasse(metodo);
+            metodos.set(nomeMetodoOriginal, {
+                nome: nomeMetodoOriginal,
+                nomeCil: nomeMetodoOriginal === 'construtor' ? '.ctor' : nomeMetodoOriginal,
+                tipoRetornoDelegua,
+                tipoRetornoCil: this.mapearTipoCil(tipoRetornoDelegua),
+                parametros,
+                eConstrutor: nomeMetodoOriginal === 'construtor',
+            });
+        }
+
+        this.classes.set(nome, {
+            nome,
+            metodos,
+            campos: new Map(),
+        });
+    }
+
     private capturarEstadoCompilacao(): EstadoCompilacao {
         return {
             instrucoes: this.instrucoes,
@@ -569,6 +675,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             proximoIndiceLocal: this.proximoIndiceLocal,
             pilhaRotulosLoop: this.pilhaRotulosLoop,
             funcaoAtual: this.funcaoAtual,
+            classeAtual: this.classeAtual,
+            metodoClasseAtual: this.metodoClasseAtual,
         };
     }
 
@@ -579,9 +687,19 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.proximoIndiceLocal = estado.proximoIndiceLocal;
         this.pilhaRotulosLoop = estado.pilhaRotulosLoop;
         this.funcaoAtual = estado.funcaoAtual;
+        this.classeAtual = estado.classeAtual;
+        this.metodoClasseAtual = estado.metodoClasseAtual;
     }
 
     private resolverTipoConstruto(construto: any): string {
+        if (construto instanceof Isto) {
+            if (!this.classeAtual) {
+                throw new ErroCompilador("'isto' só pode ser usado dentro de métodos de classe.");
+            }
+
+            return this.classeAtual.nome;
+        }
+
         if (construto instanceof Literal) {
             // O parser marca todo literal numérico genericamente como 'número',
             // mesmo quando o valor é um inteiro (ex.: `123`). Por isso o valor
@@ -671,6 +789,17 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             if (construto.entidadeChamada instanceof AcessoMetodoOuPropriedade) {
                 const tipoObjeto = this.resolverTipoConstruto(construto.entidadeChamada.objeto);
+
+                const classe = this.classes.get(tipoObjeto);
+                if (classe) {
+                    const metodoClasse = classe.metodos.get(construto.entidadeChamada.simbolo.lexema);
+                    if (!metodoClasse || metodoClasse.eConstrutor) {
+                        throw new ErroCompilador(`Método '${construto.entidadeChamada.simbolo.lexema}' não existe na classe '${tipoObjeto}'.`);
+                    }
+
+                    return metodoClasse.tipoRetornoDelegua;
+                }
+
                 switch (construto.entidadeChamada.simbolo.lexema) {
                     case 'tamanho':
                         return 'inteiro';
@@ -685,6 +814,11 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             if (!(construto.entidadeChamada instanceof Variavel)) {
                 throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
+            }
+
+            const classe = this.classes.get(construto.entidadeChamada.simbolo.lexema);
+            if (classe) {
+                return classe.nome;
             }
 
             const funcao = this.funcoes.get(construto.entidadeChamada.simbolo.lexema);
@@ -722,6 +856,17 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
         if (construto instanceof AcessoMetodoOuPropriedade) {
             const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
+
+            const classe = this.classes.get(tipoObjeto);
+            if (classe) {
+                const campo = classe.campos.get(construto.simbolo.lexema);
+                if (!campo) {
+                    throw new ErroCompilador(`Propriedade '${construto.simbolo.lexema}' não definida na classe '${classe.nome}'.`);
+                }
+
+                return campo.tipoDelegua;
+            }
+
             if (construto.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
                 return 'inteiro';
             }
@@ -735,6 +880,36 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             }
 
             throw new ErroCompilador(`Acesso '${construto.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+        }
+        if (construto instanceof DefinirValor) {
+            const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
+            const classe = this.classes.get(tipoObjeto);
+            if (!classe) {
+                throw new ErroCompilador('Definição de propriedade suportada apenas para instâncias de classe nesta fase do compilador.');
+            }
+
+            const tipoValor = this.resolverTipoConstruto(construto.valor);
+            const nomeCampo = construto.nome.lexema;
+            const campoExistente = classe.campos.get(nomeCampo);
+            if (campoExistente) {
+                const compativel =
+                    tipoValor === campoExistente.tipoDelegua ||
+                    (campoExistente.tipoDelegua === 'numero' && tipoValor === 'inteiro');
+                if (!compativel) {
+                    throw new ErroCompilador(
+                        `Propriedade '${classe.nome}.${nomeCampo}' é '${campoExistente.tipoDelegua}', mas recebeu '${tipoValor}'.`
+                    );
+                }
+
+                return campoExistente.tipoDelegua;
+            }
+
+            classe.campos.set(nomeCampo, {
+                nome: nomeCampo,
+                tipoDelegua: tipoValor,
+                tipoCil: this.mapearTipoCil(tipoValor),
+            });
+            return tipoValor;
         }
         if (construto instanceof Unario) {
             if (construto.operador.tipo === 'NEGACAO' || construto.operador.tipo === 'NAO') {
@@ -1148,6 +1323,47 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         if (expressao.entidadeChamada instanceof AcessoMetodoOuPropriedade) {
             const tipoObjeto = this.resolverTipoConstruto(expressao.entidadeChamada.objeto);
+            const classe = this.classes.get(tipoObjeto);
+            if (classe) {
+                const metodoClasse = classe.metodos.get(expressao.entidadeChamada.simbolo.lexema);
+                if (!metodoClasse || metodoClasse.eConstrutor) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não existe na classe '${classe.nome}'.`);
+                }
+
+                if (expressao.argumentos.length !== metodoClasse.parametros.length) {
+                    throw new ErroCompilador(
+                        `Método '${classe.nome}.${metodoClasse.nome}' espera ${metodoClasse.parametros.length} argumento(s), mas recebeu ${expressao.argumentos.length}.`
+                    );
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                for (let indice = 0; indice < expressao.argumentos.length; indice++) {
+                    const argumento = expressao.argumentos[indice];
+                    const parametro = metodoClasse.parametros[indice];
+                    const tipoArgumento = this.resolverTipoConstruto(argumento);
+                    const compativel =
+                        tipoArgumento === parametro.tipoDelegua ||
+                        (parametro.tipoDelegua === 'numero' && tipoArgumento === 'inteiro');
+                    if (!compativel) {
+                        throw new ErroCompilador(
+                            `Argumento ${indice + 1} do método '${classe.nome}.${metodoClasse.nome}' deve ser '${parametro.tipoDelegua}', mas recebeu '${tipoArgumento}'.`
+                        );
+                    }
+
+                    await argumento.aceitar(this as any);
+                    if (parametro.tipoDelegua === 'numero' && tipoArgumento === 'inteiro') {
+                        this.instrucoes.push('conv.r8');
+                    }
+                }
+
+                this.instrucoes.push(
+                    `callvirt instance ${metodoClasse.tipoRetornoCil} class ${classe.nome}::${metodoClasse.nomeCil}(${metodoClasse.parametros
+                        .map((parametro) => parametro.tipoCil)
+                        .join(', ')})`
+                );
+                return metodoClasse.tipoRetornoDelegua;
+            }
+
             if (expressao.argumentos.length !== 0) {
                 throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não aceita argumentos nesta fase do compilador.`);
             }
@@ -1186,6 +1402,41 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         if (!(expressao.entidadeChamada instanceof Variavel)) {
             throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
+        }
+
+        const classe = this.classes.get(expressao.entidadeChamada.simbolo.lexema);
+        if (classe) {
+            const construtor = classe.metodos.get('construtor');
+            const parametros = construtor?.parametros || [];
+            if (expressao.argumentos.length !== parametros.length) {
+                throw new ErroCompilador(
+                    `Construtor '${classe.nome}' espera ${parametros.length} argumento(s), mas recebeu ${expressao.argumentos.length}.`
+                );
+            }
+
+            for (let indice = 0; indice < expressao.argumentos.length; indice++) {
+                const argumento = expressao.argumentos[indice];
+                const parametro = parametros[indice];
+                const tipoArgumento = this.resolverTipoConstruto(argumento);
+                const compativel =
+                    tipoArgumento === parametro.tipoDelegua ||
+                    (parametro.tipoDelegua === 'numero' && tipoArgumento === 'inteiro');
+                if (!compativel) {
+                    throw new ErroCompilador(
+                        `Argumento ${indice + 1} do construtor '${classe.nome}' deve ser '${parametro.tipoDelegua}', mas recebeu '${tipoArgumento}'.`
+                    );
+                }
+
+                await argumento.aceitar(this as any);
+                if (parametro.tipoDelegua === 'numero' && tipoArgumento === 'inteiro') {
+                    this.instrucoes.push('conv.r8');
+                }
+            }
+
+            this.instrucoes.push(
+                `newobj instance void class ${classe.nome}::.ctor(${parametros.map((parametro) => parametro.tipoCil).join(', ')})`
+            );
+            return classe.nome;
         }
 
         const funcao = this.funcoes.get(expressao.entidadeChamada.simbolo.lexema);
@@ -1235,6 +1486,18 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     async visitarExpressaoAcessoMetodoOuPropriedade(expressao: AcessoMetodoOuPropriedade): Promise<string> {
         const tipoObjeto = this.resolverTipoConstruto(expressao.objeto);
+        const classe = this.classes.get(tipoObjeto);
+        if (classe) {
+            const campo = classe.campos.get(expressao.simbolo.lexema);
+            if (!campo) {
+                throw new ErroCompilador(`Propriedade '${expressao.simbolo.lexema}' não definida na classe '${classe.nome}'.`);
+            }
+
+            await expressao.objeto.aceitar(this as any);
+            this.instrucoes.push(`ldfld ${campo.tipoCil} class ${classe.nome}::${campo.nome}`);
+            return campo.tipoDelegua;
+        }
+
         if (expressao.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
             await expressao.objeto.aceitar(this as any);
             this.emitirCarregamentoTamanhoColecao(tipoObjeto);
@@ -1264,6 +1527,49 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         throw new ErroCompilador(`Acesso '${expressao.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+    }
+
+    async visitarExpressaoIsto(): Promise<string> {
+        if (!this.classeAtual || !this.metodoClasseAtual) {
+            throw new ErroCompilador("'isto' só pode ser usado dentro de métodos de classe.");
+        }
+
+        this.instrucoes.push('ldarg 0');
+        return this.classeAtual.nome;
+    }
+
+    async visitarExpressaoDefinirValor(expressao: DefinirValor): Promise<any> {
+        const tipoObjeto = this.resolverTipoConstruto(expressao.objeto);
+        const classe = this.classes.get(tipoObjeto);
+        if (!classe) {
+            throw new ErroCompilador('Definição de propriedade suportada apenas para instâncias de classe nesta fase do compilador.');
+        }
+
+        const nomeCampo = expressao.nome.lexema;
+        let campo = classe.campos.get(nomeCampo);
+        const tipoValor = this.resolverTipoConstruto(expressao.valor);
+
+        if (!campo) {
+            campo = {
+                nome: nomeCampo,
+                tipoDelegua: tipoValor,
+                tipoCil: this.mapearTipoCil(tipoValor),
+            };
+            classe.campos.set(nomeCampo, campo);
+        }
+
+        const compativel =
+            tipoValor === campo.tipoDelegua ||
+            (campo.tipoDelegua === 'numero' && tipoValor === 'inteiro');
+        if (!compativel) {
+            throw new ErroCompilador(
+                `Propriedade '${classe.nome}.${nomeCampo}' é '${campo.tipoDelegua}', mas recebeu '${tipoValor}'.`
+            );
+        }
+
+        await expressao.objeto.aceitar(this as any);
+        await this.emitirConstrutoParaTipoEsperado(expressao.valor, campo.tipoDelegua);
+        this.instrucoes.push(`stfld ${campo.tipoCil} class ${classe.nome}::${nomeCampo}`);
     }
 
     async visitarExpressaoBloco(declaracao: Bloco): Promise<any> {
@@ -1341,8 +1647,121 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.emitirRotulo(rotuloFim);
     }
 
+    private async compilarMetodoClasse(declaracaoMetodo: FuncaoDeclaracao): Promise<string> {
+        if (!this.classeAtual) {
+            throw new ErroCompilador('Contexto de classe ausente durante compilação de método.');
+        }
+
+        const metodoClasse = this.classeAtual.metodos.get(declaracaoMetodo.simbolo.lexema);
+        if (!metodoClasse) {
+            throw new ErroCompilador(`Método '${declaracaoMetodo.simbolo.lexema}' não registrado na classe '${this.classeAtual.nome}'.`);
+        }
+
+        const estadoAnterior = this.capturarEstadoCompilacao();
+        this.instrucoes = [];
+        this.variaveis = new Map();
+        this.locaisTemporarios = [];
+        this.proximoIndiceLocal = 0;
+        this.pilhaRotulosLoop = [];
+        this.funcaoAtual = null;
+        this.metodoClasseAtual = metodoClasse;
+
+        try {
+            for (let indice = 0; indice < metodoClasse.parametros.length; indice++) {
+                const parametro = metodoClasse.parametros[indice];
+                this.variaveis.set(parametro.nome, {
+                    indice: indice + 1,
+                    tipoCil: parametro.tipoCil,
+                    tipoDelegua: parametro.tipoDelegua,
+                    armazenamento: 'argumento',
+                });
+            }
+
+            if (metodoClasse.eConstrutor) {
+                this.instrucoes.push('ldarg 0');
+                this.instrucoes.push('call instance void [mscorlib]System.Object::.ctor()');
+            }
+
+            for (const item of declaracaoMetodo.funcao.corpo) {
+                await item.aceitar(this as any);
+            }
+
+            if (metodoClasse.tipoRetornoDelegua === 'vazio') {
+                this.instrucoes.push('ret');
+            }
+
+            const locaisOrdenados = [
+                ...Array.from(this.variaveis.values()).filter((variavel) => variavel.armazenamento === 'local'),
+                ...this.locaisTemporarios,
+            ].sort((a, b) => a.indice - b.indice);
+            const linhaLocais = locaisOrdenados.length
+                ? `    .locals init (${locaisOrdenados.map((local) => `${local.tipoCil} V_${local.indice}`).join(', ')})\n`
+                : '';
+            const corpo = this.instrucoes.map((instrucao) => `    ${instrucao}`).join('\n');
+            const cabecalhoMetodo = metodoClasse.eConstrutor
+                ? `.method public hidebysig specialname rtspecialname instance void ${metodoClasse.nomeCil}(${metodoClasse.parametros
+                      .map((parametro) => `${parametro.tipoCil} ${parametro.nome}`)
+                      .join(', ')}) cil managed`
+                : `.method public hidebysig instance ${metodoClasse.tipoRetornoCil} ${metodoClasse.nomeCil}(${metodoClasse.parametros
+                      .map((parametro) => `${parametro.tipoCil} ${parametro.nome}`)
+                      .join(', ')}) cil managed`;
+
+            return (
+                `${cabecalhoMetodo}\n` +
+                `  {\n` +
+                `    .maxstack 8\n` +
+                linhaLocais +
+                (corpo ? corpo + '\n' : '') +
+                `  }`
+            );
+        } finally {
+            this.restaurarEstadoCompilacao(estadoAnterior);
+            this.metodoClasseAtual = null;
+        }
+    }
+
+    async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
+        const classe = this.classes.get(declaracao.simbolo.lexema);
+        if (!classe) {
+            throw new ErroCompilador(`Classe '${declaracao.simbolo.lexema}' não registrada.`);
+        }
+
+        const estadoAnterior = this.capturarEstadoCompilacao();
+        this.classeAtual = classe;
+        this.funcaoAtual = null;
+
+        try {
+            const metodosOrdenados = [...declaracao.metodos].sort((a, b) => {
+                if (a.simbolo.lexema === 'construtor') return -1;
+                if (b.simbolo.lexema === 'construtor') return 1;
+                return 0;
+            });
+
+            const metodosCompilados: string[] = [];
+            for (const metodo of metodosOrdenados) {
+                metodosCompilados.push(await this.compilarMetodoClasse(metodo));
+            }
+
+            const campos = [...classe.campos.values()]
+                .map((campo) => `  .field public ${campo.tipoCil} ${campo.nome}`)
+                .join('\n');
+
+            this.classesCompiladas.push(
+                `.class public auto ansi beforefieldinit ${classe.nome}\n` +
+                    `       extends [mscorlib]System.Object\n` +
+                    `{\n` +
+                    (campos ? `${campos}\n\n` : '') +
+                    `${metodosCompilados.join('\n\n')}\n` +
+                    `}`
+            );
+        } finally {
+            this.restaurarEstadoCompilacao(estadoAnterior);
+            this.classeAtual = null;
+        }
+    }
+
     async visitarDeclaracaoDefinicaoFuncao(declaracao: FuncaoDeclaracao): Promise<any> {
-        if (this.funcaoAtual) {
+        if (this.funcaoAtual || this.metodoClasseAtual) {
             throw new ErroCompilador('Funções aninhadas ainda não são suportadas neste compilador.');
         }
 
@@ -1468,13 +1887,18 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     async visitarExpressaoRetornar(declaracao: Retorna): Promise<any> {
-        if (!this.funcaoAtual) {
-            throw new ErroCompilador('`retorna` só pode ser usado dentro de funções.');
+        if (!this.funcaoAtual && !this.metodoClasseAtual) {
+            throw new ErroCompilador('`retorna` só pode ser usado dentro de funções ou métodos.');
         }
 
-        if (this.funcaoAtual.tipoRetornoDelegua === 'vazio') {
+        const escopoRetorno = this.funcaoAtual || this.metodoClasseAtual;
+        if (!escopoRetorno) {
+            throw new ErroCompilador('Escopo de retorno inválido.');
+        }
+
+        if (escopoRetorno.tipoRetornoDelegua === 'vazio') {
             if (declaracao.valor) {
-                throw new ErroCompilador(`Função '${this.funcaoAtual.nome}' não deve retornar valor.`);
+                throw new ErroCompilador(`'${escopoRetorno.nome}' não deve retornar valor.`);
             }
 
             this.instrucoes.push('ret');
@@ -1482,22 +1906,22 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         if (!declaracao.valor) {
-            throw new ErroCompilador(`Função '${this.funcaoAtual.nome}' deve retornar valor.`);
+            throw new ErroCompilador(`'${escopoRetorno.nome}' deve retornar valor.`);
         }
 
         const tipoValor = this.resolverTipoConstruto(declaracao.valor);
         const tipoCompativel =
-            tipoValor === this.funcaoAtual.tipoRetornoDelegua ||
-            (this.funcaoAtual.tipoRetornoDelegua === 'numero' && tipoValor === 'inteiro');
+            tipoValor === escopoRetorno.tipoRetornoDelegua ||
+            (escopoRetorno.tipoRetornoDelegua === 'numero' && tipoValor === 'inteiro');
 
         if (!tipoCompativel) {
             throw new ErroCompilador(
-                `Função '${this.funcaoAtual.nome}' retorna '${this.funcaoAtual.tipoRetornoDelegua}', mas recebeu '${tipoValor}'.`
+                `'${escopoRetorno.nome}' retorna '${escopoRetorno.tipoRetornoDelegua}', mas recebeu '${tipoValor}'.`
             );
         }
 
         await declaracao.valor.aceitar(this as any);
-        if (this.funcaoAtual.tipoRetornoDelegua === 'numero' && tipoValor === 'inteiro') {
+        if (escopoRetorno.tipoRetornoDelegua === 'numero' && tipoValor === 'inteiro') {
             this.instrucoes.push('conv.r8');
         }
 
