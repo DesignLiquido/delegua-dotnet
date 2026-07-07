@@ -1,3 +1,8 @@
+# Artefatos gerados pelo compilador (arquivos de exemplo em exemplos/*.delegua devem ser versionados)
+exemplos/*.il
+exemplos/*.exe
+exemplos/*.runtimeconfig.json
+
 # Logs
 logs
 *.log

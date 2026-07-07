@@ -1,0 +1,5 @@
+var x = 10
+var y = 2.5
+escreva(x + y)
+escreva("ola mundo")
+escreva(5 / 2)
