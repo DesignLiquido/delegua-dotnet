@@ -1,0 +1,6 @@
+funcao valor(): inteiro { retorna 1 }
+funcao nada(): vazio { retorna }
+var itens = [1, 2, 3]
+itens[1] = valor()
+nada()
+escreva(itens[1])

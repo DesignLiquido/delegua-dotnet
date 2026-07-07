@@ -220,6 +220,42 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('ldloc 0');
     });
 
+    it('Funcao sem parâmetros compila chamada direta', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao valor(): inteiro { retorna 1 }',
+            'escreva(valor())',
+        ]);
+
+        expect(resultado).toContain('.method public static int32 valor() cil managed');
+        expect(resultado).toContain('call int32 Programa::valor()');
+    });
+
+    it('Funcao vazia pode ser chamada como expressão', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao nada(): vazio { retorna }',
+            'nada()',
+        ]);
+
+        expect(resultado).toContain('.method public static void nada() cil managed');
+        expect(resultado).toContain('call void Programa::nada()');
+        expect(resultado).not.toContain('pop\n    ret\n\n.method public static void nada()');
+    });
+
+    it('Funcao numero aceita argumentos inteiros com promoção', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao media(a: numero, b: numero): numero { retorna a + b }',
+            'escreva(media(1, 2))',
+        ]);
+
+        expect(resultado).toContain('.method public static float64 media(float64 a, float64 b) cil managed');
+        expect(resultado).toContain('conv.r8');
+        expect(resultado).toContain('call float64 Programa::media(float64, float64)');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(float64)');
+    });
+
     it('Funcao aninhada falha na compilação', async () => {
         const compilador = new CompiladorDotnet();
 
@@ -241,6 +277,14 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Retorna com tipo incompatível falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar(['funcao soma(): inteiro { retorna "texto" }'])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Chamada com tipo de argumento incompatível falha na compilação', async () => {
         const compilador = new CompiladorDotnet();
 
@@ -249,6 +293,39 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
                 'funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b }',
                 'escreva(soma("1", 2))',
             ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Vetor literal compila para List com leituras por índice', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var itens = [1, 2, 3]',
+            'escreva(itens[1])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.List`1<int32>');
+        expect(resultado).toContain('newobj instance void class [mscorlib]System.Collections.Generic.List`1<int32>::.ctor()');
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.List`1<int32>::Add(int32)');
+        expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.List`1<int32>::get_Item(int32)');
+    });
+
+    it('Atribuição por índice em vetor atualiza elemento', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var itens = [1, 2, 3]',
+            'itens[1] = 9',
+            'escreva(itens[1])',
+        ]);
+
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.List`1<int32>::set_Item(int32, int32)');
+        expect(resultado).toContain('ldc.i4 9');
+    });
+
+    it('Atribuição de tipo incompatível em vetor falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar(['var itens = [1, 2, 3]', 'itens[1] = "texto"'])
         ).rejects.toThrow(ErroCompilador);
     });
 

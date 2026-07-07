@@ -1,4 +1,6 @@
 import {
+    AcessoIndiceVariavel,
+    AtribuicaoPorIndice,
     Agrupamento,
     Atribuir,
     AvaliadorSintatico,
@@ -20,6 +22,7 @@ import {
     Unario,
     Var,
     Variavel,
+    Vetor,
 } from '@designliquido/delegua';
 
 import { ErroCompilador } from './erros/erro-compilador';
@@ -68,7 +71,7 @@ const MAPA_TIPOS_CIL: Record<string, string> = {
  * Suporta o núcleo da fatia inicial (`var`, leitura de variáveis, aritmética,
  * `escreva`) e a etapa atual de controle de fluxo (`se`/`senao`,
  * `enquanto`, `para`, `escolha`, `continua`, `sustar`, atribuição local,
- * comparações, `e`/`ou`, `nao`).
+ * comparações, `e`/`ou`, `nao`), além do primeiro recorte de funções e vetores.
  * Demais construtos continuam lançando `ErroCompilador`
  * (ver `VisitanteBaseNaoImplementado`).
  */
@@ -154,6 +157,32 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipo === 'inteiro' || tipo === 'numero';
     }
 
+    private tipoEhVetor(tipo: string): boolean {
+        return tipo.endsWith('[]');
+    }
+
+    private normalizarTipoVetor(tipo: string): string {
+        if (tipo === 'número[]') return 'numero[]';
+        if (tipo === 'lógico[]') return 'logico[]';
+        return tipo;
+    }
+
+    private obterTipoElementoVetor(tipo: string): string {
+        if (!this.tipoEhVetor(tipo)) {
+            throw new ErroCompilador(`Tipo '${tipo}' não é um vetor.`);
+        }
+
+        return this.normalizarTipo(tipo.slice(0, -2));
+    }
+
+    private mapearTipoElementoCil(tipoDelegua: string): string {
+        return this.mapearTipoCil(tipoDelegua);
+    }
+
+    private mapearTipoVetorCil(tipoElementoDelegua: string): string {
+        return `class [mscorlib]System.Collections.Generic.List\`1<${this.mapearTipoElementoCil(tipoElementoDelegua)}>`;
+    }
+
     private emitirCarregamentoVariavel(local: VariavelLocal): void {
         this.instrucoes.push(`${local.armazenamento === 'argumento' ? 'ldarg' : 'ldloc'} ${local.indice}`);
     }
@@ -202,7 +231,19 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     private construtoDeixaValorNaPilha(construto: any): boolean {
-        return !(construto instanceof Atribuir);
+        if (construto instanceof Atribuir || construto instanceof AtribuicaoPorIndice) {
+            return false;
+        }
+
+        if (construto instanceof Chamada) {
+            try {
+                return this.resolverTipoConstruto(construto) !== 'vazio';
+            } catch {
+                return true;
+            }
+        }
+
+        return true;
     }
 
     private async emitirSaltoCondicional(
@@ -329,6 +370,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     private mapearTipoCil(tipoDelegua: string): string {
+        if (this.tipoEhVetor(tipoDelegua)) {
+            return this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoDelegua));
+        }
+
         const tipoCil = MAPA_TIPOS_CIL[tipoDelegua];
         if (!tipoCil) {
             throw new ErroCompilador(`Tipo '${tipoDelegua}' não implementado para .NET.`);
@@ -410,6 +455,36 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             if (typeof construto.valor === 'number') return Number.isInteger(construto.valor) ? 'inteiro' : 'numero';
             throw new ErroCompilador('Não foi possível deduzir o tipo do literal.');
         }
+        if (construto instanceof Vetor) {
+            const elementos = construto.elementos || [];
+            if (elementos.length === 0) {
+                if (construto.tipo) {
+                    return this.normalizarTipoVetor(construto.tipo);
+                }
+
+                throw new ErroCompilador('Não foi possível deduzir o tipo de um vetor vazio.');
+            }
+
+            const tipoElemento = this.resolverTipoConstruto(elementos[0]);
+            for (let indice = 1; indice < elementos.length; indice++) {
+                const tipoAtual = this.resolverTipoConstruto(elementos[indice]);
+                const tiposCompativeis =
+                    tipoAtual === tipoElemento ||
+                    (this.tipoEhNumerico(tipoElemento) && this.tipoEhNumerico(tipoAtual));
+
+                if (!tiposCompativeis) {
+                    throw new ErroCompilador('Vetor com elementos de tipos incompatíveis não é suportado nesta fase do compilador.');
+                }
+            }
+
+            const tipoNormalizado = this.tipoEhNumerico(tipoElemento)
+                ? elementos.some((elemento: any) => this.resolverTipoConstruto(elemento) === 'numero')
+                    ? 'numero'
+                    : 'inteiro'
+                : tipoElemento;
+
+            return `${tipoNormalizado}[]`;
+        }
         if (construto instanceof Variavel) {
             const local = this.variaveis.get(construto.simbolo.lexema);
             if (!local) throw new ErroCompilador(`Variável '${construto.simbolo.lexema}' não declarada.`);
@@ -447,6 +522,14 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             }
 
             return funcao.tipoRetornoDelegua;
+        }
+        if (construto instanceof AcessoIndiceVariavel) {
+            const tipoEntidade = this.resolverTipoConstruto(construto.entidadeChamada);
+            if (!this.tipoEhVetor(tipoEntidade)) {
+                throw new ErroCompilador('Acesso por índice suportado apenas para vetores nesta fase do compilador.');
+            }
+
+            return this.obterTipoElementoVetor(tipoEntidade);
         }
         if (construto instanceof Unario) {
             if (construto.operador.tipo === 'NEGACAO' || construto.operador.tipo === 'NAO') {
@@ -507,11 +590,56 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipo;
     }
 
+    async visitarExpressaoVetor(expressao: Vetor): Promise<string> {
+        const tipoVetor = this.resolverTipoConstruto(expressao);
+        const tipoElemento = this.obterTipoElementoVetor(tipoVetor);
+        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+        const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
+
+        this.instrucoes.push(`newobj instance void ${tipoVetorCil}::.ctor()`);
+
+        for (const elemento of expressao.elementos) {
+            const tipoAtual = this.resolverTipoConstruto(elemento);
+            this.instrucoes.push('dup');
+            await elemento.aceitar(this as any);
+            if (tipoElemento === 'numero' && tipoAtual === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+            this.instrucoes.push(`callvirt instance void ${tipoVetorCil}::Add(${tipoElementoCil})`);
+        }
+
+        return tipoVetor;
+    }
+
     async visitarExpressaoDeVariavel(expressao: Variavel): Promise<string> {
         const local = this.variaveis.get(expressao.simbolo.lexema);
         if (!local) throw new ErroCompilador(`Variável '${expressao.simbolo.lexema}' não declarada.`);
         this.emitirCarregamentoVariavel(local);
         return local.tipoDelegua;
+    }
+
+    async visitarExpressaoAcessoIndiceVariavel(expressao: AcessoIndiceVariavel): Promise<string> {
+        const tipoEntidade = this.resolverTipoConstruto(expressao.entidadeChamada);
+        if (!this.tipoEhVetor(tipoEntidade)) {
+            throw new ErroCompilador('Acesso por índice suportado apenas para vetores nesta fase do compilador.');
+        }
+
+        const tipoElemento = this.obterTipoElementoVetor(tipoEntidade);
+        const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
+        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+        const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+        if (!this.tipoEhNumerico(tipoIndice)) {
+            throw new ErroCompilador('Índice de vetor deve ser numérico.');
+        }
+
+        await expressao.entidadeChamada.aceitar(this as any);
+        await expressao.indice.aceitar(this as any);
+        if (tipoIndice === 'numero') {
+            throw new ErroCompilador('Índice de vetor deve ser inteiro nesta fase do compilador.');
+        }
+
+        this.instrucoes.push(`callvirt instance ${tipoElementoCil} ${tipoVetorCil}::get_Item(int32)`);
+        return tipoElemento;
     }
 
     async visitarExpressaoAgrupamento(expressao: Agrupamento): Promise<string> {
@@ -646,6 +774,40 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         this.emitirArmazenamentoVariavel(local);
         return local.tipoDelegua;
+    }
+
+    async visitarExpressaoAtribuicaoPorIndice(expressao: AtribuicaoPorIndice): Promise<any> {
+        const tipoObjeto = this.resolverTipoConstruto(expressao.objeto);
+        if (!this.tipoEhVetor(tipoObjeto)) {
+            throw new ErroCompilador('Atribuição por índice suportada apenas para vetores nesta fase do compilador.');
+        }
+
+        const tipoElemento = this.obterTipoElementoVetor(tipoObjeto);
+        const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+        if (!this.tipoEhNumerico(tipoIndice) || tipoIndice === 'numero') {
+            throw new ErroCompilador('Índice de vetor deve ser inteiro nesta fase do compilador.');
+        }
+
+        const tipoValor = this.resolverTipoConstruto(expressao.valor);
+        const tipoCompativel =
+            tipoValor === tipoElemento || (tipoElemento === 'numero' && tipoValor === 'inteiro');
+        if (!tipoCompativel) {
+            throw new ErroCompilador(
+                `Não pode atribuir valor do tipo '${tipoValor}' a vetor de elementos '${tipoElemento}'.`
+            );
+        }
+
+        const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
+        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+
+        await expressao.objeto.aceitar(this as any);
+        await expressao.indice.aceitar(this as any);
+        await expressao.valor.aceitar(this as any);
+        if (tipoElemento === 'numero' && tipoValor === 'inteiro') {
+            this.instrucoes.push('conv.r8');
+        }
+
+        this.instrucoes.push(`callvirt instance void ${tipoVetorCil}::set_Item(int32, ${tipoElementoCil})`);
     }
 
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<string> {
