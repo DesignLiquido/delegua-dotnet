@@ -251,6 +251,50 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return `class [mscorlib]System.Collections.Generic.Dictionary\`2<${this.mapearTipoElementoCil(tipoChaveDelegua)}, ${this.mapearTipoElementoCil(tipoValorDelegua)}>`;
     }
 
+    private mapearTipoColecaoChaves(tipoColecao: string): string {
+        if (this.tipoEhVetor(tipoColecao)) {
+            return 'inteiro[]';
+        }
+
+        if (this.tipoEhDicionario(tipoColecao)) {
+            return `${this.obterTiposDicionario(tipoColecao).chave}[]`;
+        }
+
+        throw new ErroCompilador(`Tipo '${tipoColecao}' não possui chaves.`);
+    }
+
+    private mapearTipoColecaoValores(tipoColecao: string): string {
+        if (this.tipoEhVetor(tipoColecao)) {
+            return tipoColecao;
+        }
+
+        if (this.tipoEhDicionario(tipoColecao)) {
+            return `${this.obterTiposDicionario(tipoColecao).valor}[]`;
+        }
+
+        throw new ErroCompilador(`Tipo '${tipoColecao}' não possui valores.`);
+    }
+
+    private emitirConstrucaoListaDeChavesDicionario(tipoColecao: string): void {
+        const tipos = this.obterTiposDicionario(tipoColecao);
+        const tipoLista = this.mapearTipoVetorCil(tipos.chave);
+        const tipoDicionario = this.mapearTipoDicionarioCil(tipos.chave, tipos.valor);
+        const tipoKeyCollection = `class [mscorlib]System.Collections.Generic.Dictionary\`2/KeyCollection<${this.mapearTipoElementoCil(tipos.chave)}, ${this.mapearTipoElementoCil(tipos.valor)}>`;
+
+        this.instrucoes.push(`callvirt instance ${tipoKeyCollection} ${tipoDicionario}::get_Keys()`);
+        this.instrucoes.push(`newobj instance void ${tipoLista}::.ctor(class [mscorlib]System.Collections.Generic.IEnumerable\`1<${this.mapearTipoElementoCil(tipos.chave)}>)`);
+    }
+
+    private emitirConstrucaoListaDeValoresDicionario(tipoColecao: string): void {
+        const tipos = this.obterTiposDicionario(tipoColecao);
+        const tipoLista = this.mapearTipoVetorCil(tipos.valor);
+        const tipoDicionario = this.mapearTipoDicionarioCil(tipos.chave, tipos.valor);
+        const tipoValueCollection = `class [mscorlib]System.Collections.Generic.Dictionary\`2/ValueCollection<${this.mapearTipoElementoCil(tipos.chave)}, ${this.mapearTipoElementoCil(tipos.valor)}>`;
+
+        this.instrucoes.push(`callvirt instance ${tipoValueCollection} ${tipoDicionario}::get_Values()`);
+        this.instrucoes.push(`newobj instance void ${tipoLista}::.ctor(class [mscorlib]System.Collections.Generic.IEnumerable\`1<${this.mapearTipoElementoCil(tipos.valor)}>)`);
+    }
+
     private emitirCarregamentoTamanhoColecao(tipoColecao: string): void {
         if (this.tipoEhVetor(tipoColecao)) {
             this.instrucoes.push(
@@ -609,6 +653,36 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return 'logico';
         }
         if (construto instanceof Chamada) {
+            if (construto.entidadeChamada instanceof AcessoMetodo) {
+                const tipoObjeto = this.resolverTipoConstruto(construto.entidadeChamada.objeto);
+                switch (construto.entidadeChamada.nomeMetodo) {
+                    case 'tamanho':
+                        return 'inteiro';
+                    case 'adicionar':
+                        return tipoObjeto;
+                    case 'chaves':
+                        return this.mapearTipoColecaoChaves(tipoObjeto);
+                    case 'valores':
+                        return this.mapearTipoColecaoValores(tipoObjeto);
+                    default:
+                        throw new ErroCompilador(`Método '${construto.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                }
+            }
+
+            if (construto.entidadeChamada instanceof AcessoMetodoOuPropriedade) {
+                const tipoObjeto = this.resolverTipoConstruto(construto.entidadeChamada.objeto);
+                switch (construto.entidadeChamada.simbolo.lexema) {
+                    case 'tamanho':
+                        return 'inteiro';
+                    case 'chaves':
+                        return this.mapearTipoColecaoChaves(tipoObjeto);
+                    case 'valores':
+                        return this.mapearTipoColecaoValores(tipoObjeto);
+                    default:
+                        throw new ErroCompilador(`Método '${construto.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+            }
+
             if (!(construto.entidadeChamada instanceof Variavel)) {
                 throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
             }
@@ -632,10 +706,32 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             throw new ErroCompilador('Acesso por índice suportado apenas para vetores e dicionários nesta fase do compilador.');
         }
+        if (construto instanceof AcessoMetodo) {
+            const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
+            switch (construto.nomeMetodo) {
+                case 'adicionar':
+                    if (this.tipoEhVetor(tipoObjeto)) return tipoObjeto;
+                    break;
+                case 'chaves':
+                    return this.mapearTipoColecaoChaves(tipoObjeto);
+                case 'valores':
+                    return this.mapearTipoColecaoValores(tipoObjeto);
+            }
+
+            throw new ErroCompilador(`Método '${construto.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+        }
         if (construto instanceof AcessoMetodoOuPropriedade) {
             const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
             if (construto.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
                 return 'inteiro';
+            }
+
+            if (construto.simbolo.lexema === 'chaves') {
+                return this.mapearTipoColecaoChaves(tipoObjeto);
+            }
+
+            if (construto.simbolo.lexema === 'valores') {
+                return this.mapearTipoColecaoValores(tipoObjeto);
             }
 
             throw new ErroCompilador(`Acesso '${construto.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
@@ -990,14 +1086,61 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<string> {
         if (expressao.entidadeChamada instanceof AcessoMetodo) {
             const tipoObjeto = this.resolverTipoConstruto(expressao.entidadeChamada.objeto);
-            if (expressao.argumentos.length !== 0) {
-                throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não aceita argumentos nesta fase do compilador.`);
-            }
+            switch (expressao.entidadeChamada.nomeMetodo) {
+                case 'tamanho':
+                    if (expressao.argumentos.length !== 0) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não aceita argumentos nesta fase do compilador.`);
+                    }
 
-            if (expressao.entidadeChamada.nomeMetodo === 'tamanho') {
-                await expressao.entidadeChamada.objeto.aceitar(this as any);
-                this.emitirCarregamentoTamanhoColecao(tipoObjeto);
-                return 'inteiro';
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    this.emitirCarregamentoTamanhoColecao(tipoObjeto);
+                    return 'inteiro';
+                case 'adicionar':
+                    if (!this.tipoEhVetor(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+                    if (expressao.argumentos.length !== 1) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' espera 1 argumento.`);
+                    }
+
+                    const tipoElemento = this.obterTipoElementoVetor(tipoObjeto);
+                    const tipoArgumento = this.resolverTipoConstruto(expressao.argumentos[0]);
+                    const tipoCompativel =
+                        tipoArgumento === tipoElemento || (tipoElemento === 'numero' && tipoArgumento === 'inteiro');
+                    if (!tipoCompativel) {
+                        throw new ErroCompilador(`Método 'adicionar' requer '${tipoElemento}', mas recebeu '${tipoArgumento}'.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    this.instrucoes.push('dup');
+                    await this.emitirConstrutoParaTipoEsperado(expressao.argumentos[0], tipoElemento);
+                    this.instrucoes.push(`callvirt instance void ${this.mapearTipoVetorCil(tipoElemento)}::Add(${this.mapearTipoElementoCil(tipoElemento)})`);
+                    return tipoObjeto;
+                case 'chaves':
+                    if (expressao.argumentos.length !== 0) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não aceita argumentos nesta fase do compilador.`);
+                    }
+                    if (!this.tipoEhDicionario(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    this.emitirConstrucaoListaDeChavesDicionario(tipoObjeto);
+                    return this.mapearTipoColecaoChaves(tipoObjeto);
+                case 'valores':
+                    if (expressao.argumentos.length !== 0) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não aceita argumentos nesta fase do compilador.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    if (this.tipoEhVetor(tipoObjeto)) {
+                        return tipoObjeto;
+                    }
+                    if (this.tipoEhDicionario(tipoObjeto)) {
+                        this.emitirConstrucaoListaDeValoresDicionario(tipoObjeto);
+                        return this.mapearTipoColecaoValores(tipoObjeto);
+                    }
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
             }
 
             throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
@@ -1013,6 +1156,29 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 await expressao.entidadeChamada.objeto.aceitar(this as any);
                 this.emitirCarregamentoTamanhoColecao(tipoObjeto);
                 return 'inteiro';
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'chaves') {
+                if (!this.tipoEhDicionario(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                this.emitirConstrucaoListaDeChavesDicionario(tipoObjeto);
+                return this.mapearTipoColecaoChaves(tipoObjeto);
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'valores') {
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                if (this.tipoEhVetor(tipoObjeto)) {
+                    return tipoObjeto;
+                }
+                if (this.tipoEhDicionario(tipoObjeto)) {
+                    this.emitirConstrucaoListaDeValoresDicionario(tipoObjeto);
+                    return this.mapearTipoColecaoValores(tipoObjeto);
+                }
+
+                throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
             }
 
             throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
@@ -1073,6 +1239,28 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             await expressao.objeto.aceitar(this as any);
             this.emitirCarregamentoTamanhoColecao(tipoObjeto);
             return 'inteiro';
+        }
+
+        if (expressao.simbolo.lexema === 'chaves') {
+            await expressao.objeto.aceitar(this as any);
+            if (!this.tipoEhDicionario(tipoObjeto)) {
+                throw new ErroCompilador(`Acesso '${expressao.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+            }
+
+            this.emitirConstrucaoListaDeChavesDicionario(tipoObjeto);
+            return this.mapearTipoColecaoChaves(tipoObjeto);
+        }
+
+        if (expressao.simbolo.lexema === 'valores') {
+            await expressao.objeto.aceitar(this as any);
+            if (this.tipoEhVetor(tipoObjeto)) {
+                return tipoObjeto;
+            }
+            if (this.tipoEhDicionario(tipoObjeto)) {
+                this.emitirConstrucaoListaDeValoresDicionario(tipoObjeto);
+                return this.mapearTipoColecaoValores(tipoObjeto);
+            }
+            throw new ErroCompilador(`Acesso '${expressao.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
         }
 
         throw new ErroCompilador(`Acesso '${expressao.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);

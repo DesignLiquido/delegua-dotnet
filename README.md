@@ -25,6 +25,8 @@ Suporta apenas:
 - funções de topo com parâmetros tipados, sem parâmetros, retorno `vazio`, `retorna`, recursão e chamadas entre funções;
 - vetores homogêneos com literais, leitura por índice e atribuição por índice;
 - vetores e dicionários com `tamanho` como propriedade e método sem argumentos;
+- vetores com `adicionar(...)` e `valores()`;
+- dicionários com `chaves()` e `valores()`;
 - dicionários com chaves primitivas homogêneas, valores homogêneos, leitura por chave e atribuição por chave;
 - operadores lógicos `e`, `ou` e `nao` no subconjunto booleano;
 - `escreva(...)` com os tipos acima.

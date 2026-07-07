@@ -400,6 +400,28 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado.match(/WriteLine\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('Adicionar em vetor chama Add e preserva a coleção', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2]',
+            'v.adicionar(3)',
+            'escreva(v.tamanho())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.List`1<int32>::Add(int32)');
+        expect(resultado).toContain('dup');
+    });
+
+    it('Valores de vetor retornam a própria coleção', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2]',
+            'escreva(v.valores().tamanho())',
+        ]);
+
+        expect(resultado).toContain('List`1<int32>::get_Count()');
+    });
+
     it('Dicionário literal compila para Dictionary com leitura por chave', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
@@ -446,6 +468,28 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ]);
 
         expect(resultado.match(/Dictionary`2<string, int32>::get_Count\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Chaves de dicionário retornam vetor do tipo da chave', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { "a": 1, "b": 2 }',
+            'escreva(mapa.chaves().tamanho())',
+        ]);
+
+        expect(resultado).toContain('Dictionary`2<string, int32>::get_Keys()');
+        expect(resultado).toContain('List`1<string>::.ctor(class [mscorlib]System.Collections.Generic.IEnumerable`1<string>)');
+    });
+
+    it('Valores de dicionário retornam vetor do tipo do valor', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { "a": 1, "b": 2 }',
+            'escreva(mapa.valores().tamanho())',
+        ]);
+
+        expect(resultado).toContain('Dictionary`2<string, int32>::get_Values()');
+        expect(resultado).toContain('List`1<int32>::.ctor(class [mscorlib]System.Collections.Generic.IEnumerable`1<int32>)');
     });
 
     it('Atribuição por chave em dicionário atualiza valor', async () => {
