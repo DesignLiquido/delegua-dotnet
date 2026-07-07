@@ -11,6 +11,7 @@ import {
     Lexador,
     Literal,
     Logico,
+    Para,
     Se,
     Unario,
     Var,
@@ -49,6 +50,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     private variaveis: Map<string, VariavelLocal>;
     private proximoIndiceLocal: number;
     private proximoRotulo: number;
+    private pilhaRotulosLoop: Array<{ continua: string; sustar: string }>;
 
     constructor() {
         super();
@@ -61,6 +63,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.variaveis = new Map();
         this.proximoIndiceLocal = 0;
         this.proximoRotulo = 0;
+        this.pilhaRotulosLoop = [];
 
         const retornoLexador = this.lexador.mapear(codigo, -1);
         const retornoAvaliadorSintatico = await this.avaliadorSintatico.analisar(retornoLexador, -1);
@@ -112,6 +115,15 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private emitirRotulo(rotulo: string): void {
         this.instrucoes.push(`${rotulo}:`);
+    }
+
+    private rotuloLoopAtual(): { continua: string; sustar: string } {
+        const rotulos = this.pilhaRotulosLoop[this.pilhaRotulosLoop.length - 1];
+        if (!rotulos) {
+            throw new ErroCompilador('`continua` e `sustar` só podem ser usados dentro de laços de repetição.');
+        }
+
+        return rotulos;
     }
 
     private construtoDeixaValorNaPilha(construto: any): boolean {
@@ -496,9 +508,63 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         this.emitirRotulo(rotuloInicio);
         await this.emitirSaltoCondicional(declaracao.condicao, rotuloFim, false);
-        await declaracao.corpo.aceitar(this as any);
+
+        this.pilhaRotulosLoop.push({ continua: rotuloInicio, sustar: rotuloFim });
+        try {
+            await declaracao.corpo.aceitar(this as any);
+        } finally {
+            this.pilhaRotulosLoop.pop();
+        }
+
         this.instrucoes.push(`br ${rotuloInicio}`);
         this.emitirRotulo(rotuloFim);
+    }
+
+    async visitarDeclaracaoPara(declaracao: Para): Promise<any> {
+        const inicializador = Array.isArray(declaracao.inicializador)
+            ? declaracao.inicializador[0]
+            : declaracao.inicializador;
+
+        if (inicializador) {
+            await inicializador.aceitar(this as any);
+        }
+
+        const rotuloInicio = this.gerarRotulo();
+        const rotuloIncremento = this.gerarRotulo();
+        const rotuloFim = this.gerarRotulo();
+
+        this.emitirRotulo(rotuloInicio);
+
+        if (declaracao.condicao) {
+            await this.emitirSaltoCondicional(declaracao.condicao, rotuloFim, false);
+        }
+
+        this.pilhaRotulosLoop.push({ continua: rotuloIncremento, sustar: rotuloFim });
+        try {
+            await declaracao.corpo.aceitar(this as any);
+        } finally {
+            this.pilhaRotulosLoop.pop();
+        }
+
+        this.emitirRotulo(rotuloIncremento);
+
+        if (declaracao.incrementar) {
+            await declaracao.incrementar.aceitar(this as any);
+            if (this.construtoDeixaValorNaPilha(declaracao.incrementar)) {
+                this.instrucoes.push('pop');
+            }
+        }
+
+        this.instrucoes.push(`br ${rotuloInicio}`);
+        this.emitirRotulo(rotuloFim);
+    }
+
+    async visitarExpressaoContinua(): Promise<any> {
+        this.instrucoes.push(`br ${this.rotuloLoopAtual().continua}`);
+    }
+
+    async visitarExpressaoSustar(): Promise<any> {
+        this.instrucoes.push(`br ${this.rotuloLoopAtual().sustar}`);
     }
 
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {

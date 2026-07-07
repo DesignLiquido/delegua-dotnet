@@ -19,10 +19,12 @@ Suporta apenas:
 - atribuição local (`x = ...`);
 - `se`/`senao`;
 - `enquanto`;
+- `para`;
+- `continua` e `sustar` dentro de laços;
 - operadores lógicos `e`, `ou` e `nao` no subconjunto booleano;
 - `escreva(...)` com os tipos acima.
 
-Todo o restante da gramática (`para`, `escolha`, funções, classes, vetores, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
+Todo o restante da gramática (`escolha`, funções, classes, vetores, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
 
 ## Mapeamento de tipos (nesta versão)
 
