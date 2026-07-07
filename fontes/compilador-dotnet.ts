@@ -25,6 +25,7 @@ import {
     Para,
     Retorna,
     Se,
+    TuplaN,
     Unario,
     Var,
     Variavel,
@@ -211,6 +212,18 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return ['inteiro', 'numero', 'logico', 'texto'].includes(tipo);
     }
 
+    private tipoEhTupla(tipo: string): boolean {
+        return tipo.endsWith('()');
+    }
+
+    private obterTipoElementoTupla(tipo: string): string {
+        if (!this.tipoEhTupla(tipo)) {
+            throw new ErroCompilador(`Tipo '${tipo}' não é uma tupla.`);
+        }
+
+        return this.normalizarTipo(tipo.slice(0, -2));
+    }
+
     private normalizarTipoVetor(tipo: string): string {
         if (tipo === 'número[]') return 'numero[]';
         if (tipo === 'lógico[]') return 'logico[]';
@@ -284,6 +297,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private mapearTipoVetorCil(tipoElementoDelegua: string): string {
         return `class [mscorlib]System.Collections.Generic.List\`1<${this.mapearTipoElementoCil(tipoElementoDelegua)}>`;
+    }
+
+    private mapearTipoTuplaCil(tipoElementoDelegua: string): string {
+        return `${this.mapearTipoElementoCil(tipoElementoDelegua)}[]`;
     }
 
     private mapearTipoDicionarioCil(tipoChaveDelegua: string, tipoValorDelegua: string): string {
@@ -544,6 +561,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return `class ${tipoDelegua}`;
         }
 
+        if (this.tipoEhTupla(tipoDelegua)) {
+            return this.mapearTipoTuplaCil(this.obterTipoElementoTupla(tipoDelegua));
+        }
+
         if (this.tipoEhVetor(tipoDelegua)) {
             return this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoDelegua));
         }
@@ -770,6 +791,32 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 : tipoElemento;
 
             return `${tipoNormalizado}[]`;
+        }
+        if (construto instanceof TuplaN) {
+            const elementos = construto.elementos || [];
+            if (!elementos.length) {
+                throw new ErroCompilador('Não foi possível deduzir o tipo de uma tupla vazia.');
+            }
+
+            const tipoElemento = this.resolverTipoConstruto(elementos[0]);
+            for (let indice = 1; indice < elementos.length; indice++) {
+                const tipoAtual = this.resolverTipoConstruto(elementos[indice]);
+                const tiposCompativeis =
+                    tipoAtual === tipoElemento ||
+                    (this.tipoEhNumerico(tipoElemento) && this.tipoEhNumerico(tipoAtual));
+
+                if (!tiposCompativeis) {
+                    throw new ErroCompilador('Tupla com elementos de tipos incompatíveis não é suportada nesta fase do compilador.');
+                }
+            }
+
+            const tipoNormalizado = this.tipoEhNumerico(tipoElemento)
+                ? elementos.some((elemento: any) => this.resolverTipoConstruto(elemento) === 'numero')
+                    ? 'numero'
+                    : 'inteiro'
+                : tipoElemento;
+
+            return `${tipoNormalizado}()`;
         }
         if (construto instanceof Dicionario) {
             const tipoChave = this.resolverTipoPrimitivoHomogeneo(construto.chaves, 'dicionário');
@@ -1021,6 +1068,38 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         return tipoVetor;
+    }
+
+    async visitarExpressaoTuplaN(expressao: TuplaN): Promise<string> {
+        const tipoTupla = this.resolverTipoConstruto(expressao);
+        const tipoElemento = this.obterTipoElementoTupla(tipoTupla);
+        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+
+        this.instrucoes.push(`ldc.i4 ${expressao.elementos.length}`);
+        this.instrucoes.push(`newarr ${tipoElementoCil}`);
+
+        for (let indice = 0; indice < expressao.elementos.length; indice++) {
+            const elemento = expressao.elementos[indice];
+            const tipoAtual = this.resolverTipoConstruto(elemento);
+            this.instrucoes.push('dup');
+            this.instrucoes.push(`ldc.i4 ${indice}`);
+            await elemento.aceitar(this as any);
+            if (tipoElemento === 'numero' && tipoAtual === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push(
+                tipoElementoCil === 'int32' || tipoElementoCil === 'bool'
+                    ? `stelem.i4`
+                    : tipoElementoCil === 'float64'
+                      ? `stelem.r8`
+                      : tipoElementoCil === 'string'
+                        ? `stelem.ref`
+                        : `stelem ${tipoElementoCil}`
+            );
+        }
+
+        return tipoTupla;
     }
 
     async visitarExpressaoDicionario(expressao: Dicionario): Promise<string> {
@@ -1975,6 +2054,18 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     break;
                 case 'texto':
                     this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(string)');
+                    break;
+                case 'inteiro()':
+                    this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(object)');
+                    break;
+                case 'numero()':
+                    this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(object)');
+                    break;
+                case 'logico()':
+                    this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(object)');
+                    break;
+                case 'texto()':
+                    this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(object)');
                     break;
                 default:
                     throw new ErroCompilador(`Não sabe como escrever valor de tipo '${tipo}'.`);

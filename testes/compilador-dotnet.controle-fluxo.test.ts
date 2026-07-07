@@ -435,6 +435,42 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::get_Item(string)');
     });
 
+    it('Tupla literal de inteiros compila para array fixo', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = (1, 2, 3)',
+            'escreva(t)',
+        ]);
+
+        expect(resultado).toContain('.locals init (int32[] V_0)');
+        expect(resultado).toContain('newarr int32');
+        expect(resultado).toContain('stelem.i4');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(object)');
+    });
+
+    it('Tupla numérica mista promove para float64[]', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = (1, 2.5)',
+            'escreva(t)',
+        ]);
+
+        expect(resultado).toContain('.locals init (float64[] V_0)');
+        expect(resultado).toContain('newarr float64');
+        expect(resultado).toContain('conv.r8');
+        expect(resultado).toContain('stelem.r8');
+    });
+
+    it('Tupla com tipos incompatíveis falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var t = (1, "a")',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Dicionário com chaves inteiras compila', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
@@ -625,6 +661,48 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
                 '  construtor(nome: texto) { isto.nome = nome }',
                 '  quebrar(): vazio { isto.nome = 1 }',
                 '}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Herança (herda) ainda não é suportada', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Base {}',
+                'classe Derivada herda Base {}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Implementação de interface ainda não é suportada', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'interface ITeste {}',
+                'classe Pessoa implementa ITeste {}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Classe abstrata ainda não é suportada', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe abstrata Pessoa {}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Classe estatica ainda não é suportada', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe estatica Util {}',
             ])
         ).rejects.toThrow(ErroCompilador);
     });
