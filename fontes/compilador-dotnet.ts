@@ -4,15 +4,18 @@ import {
     AvaliadorSintatico,
     Binario,
     Bloco,
+    Chamada,
     Declaracao,
     Enquanto,
     Escolha,
     Escreva,
     Expressao,
+    FuncaoDeclaracao,
     Lexador,
     Literal,
     Logico,
     Para,
+    Retorna,
     Se,
     Unario,
     Var,
@@ -26,6 +29,30 @@ interface VariavelLocal {
     indice: number;
     tipoCil: string;
     tipoDelegua: string;
+    armazenamento: 'argumento' | 'local';
+}
+
+interface ParametroCompilado {
+    nome: string;
+    tipoDelegua: string;
+    tipoCil: string;
+}
+
+interface FuncaoCompilada {
+    nome: string;
+    nomeCil: string;
+    tipoRetornoDelegua: string;
+    tipoRetornoCil: string;
+    parametros: ParametroCompilado[];
+}
+
+interface EstadoCompilacao {
+    instrucoes: string[];
+    variaveis: Map<string, VariavelLocal>;
+    locaisTemporarios: VariavelLocal[];
+    proximoIndiceLocal: number;
+    pilhaRotulosLoop: Array<{ continua: string; sustar: string }>;
+    funcaoAtual: FuncaoCompilada | null;
 }
 
 const MAPA_TIPOS_CIL: Record<string, string> = {
@@ -33,6 +60,7 @@ const MAPA_TIPOS_CIL: Record<string, string> = {
     numero: 'float64',
     logico: 'bool',
     texto: 'string',
+    vazio: 'void',
 };
 
 /**
@@ -54,6 +82,9 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     private proximoIndiceLocal: number;
     private proximoRotulo: number;
     private pilhaRotulosLoop: Array<{ continua: string; sustar: string }>;
+    private funcoes: Map<string, FuncaoCompilada>;
+    private metodosCompilados: string[];
+    private funcaoAtual: FuncaoCompilada | null;
 
     constructor() {
         super();
@@ -68,10 +99,19 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.proximoIndiceLocal = 0;
         this.proximoRotulo = 0;
         this.pilhaRotulosLoop = [];
+        this.funcoes = new Map();
+        this.metodosCompilados = [];
+        this.funcaoAtual = null;
 
         const retornoLexador = this.lexador.mapear(codigo, -1);
         const retornoAvaliadorSintatico = await this.avaliadorSintatico.analisar(retornoLexador, -1);
         const declaracoes = retornoAvaliadorSintatico.declaracoes as Declaracao[];
+
+        for (const declaracao of declaracoes) {
+            if (declaracao instanceof FuncaoDeclaracao) {
+                this.registrarAssinaturaFuncao(declaracao);
+            }
+        }
 
         for (const declaracao of declaracoes) {
             await declaracao.aceitar(this as any);
@@ -99,7 +139,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             linhaLocais +
             (corpo ? corpo + '\n' : '') +
             `    ret\n` +
-            `}\n`
+            `}\n` +
+            (this.metodosCompilados.length ? `\n${this.metodosCompilados.join('\n\n')}\n` : '')
         );
     }
 
@@ -111,6 +152,14 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private tipoEhNumerico(tipo: string): boolean {
         return tipo === 'inteiro' || tipo === 'numero';
+    }
+
+    private emitirCarregamentoVariavel(local: VariavelLocal): void {
+        this.instrucoes.push(`${local.armazenamento === 'argumento' ? 'ldarg' : 'ldloc'} ${local.indice}`);
+    }
+
+    private emitirArmazenamentoVariavel(local: VariavelLocal): void {
+        this.instrucoes.push(`${local.armazenamento === 'argumento' ? 'starg' : 'stloc'} ${local.indice}`);
     }
 
     private tiposCompativeisParaIgualdade(tipoEsquerdo: string, tipoDireito: string): boolean {
@@ -136,6 +185,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             indice: this.proximoIndiceLocal++,
             tipoCil: this.mapearTipoCil(tipoDelegua),
             tipoDelegua,
+            armazenamento: 'local' as const,
         };
 
         this.locaisTemporarios.push(local);
@@ -286,6 +336,70 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipoCil;
     }
 
+    private extrairTipoRetornoFuncao(declaracao: FuncaoDeclaracao): string {
+        const tipoExplicito = declaracao.funcao.tipo;
+        if (tipoExplicito && tipoExplicito !== 'qualquer') {
+            return this.normalizarTipo(tipoExplicito);
+        }
+
+        for (const item of declaracao.funcao.corpo) {
+            if (item instanceof Retorna) {
+                return this.normalizarTipo(item.tipo || 'vazio');
+            }
+        }
+
+        return 'vazio';
+    }
+
+    private registrarAssinaturaFuncao(declaracao: FuncaoDeclaracao): void {
+        const nome = declaracao.simbolo.lexema;
+        if (this.funcoes.has(nome)) {
+            throw new ErroCompilador(`Função '${nome}' já declarada.`);
+        }
+
+        const parametros = declaracao.funcao.parametros.map((parametro: any) => {
+            const tipoDelegua = this.normalizarTipo(parametro.tipoDado || 'qualquer');
+            if (tipoDelegua === 'qualquer') {
+                throw new ErroCompilador(`Função '${nome}' requer tipos explícitos de parâmetros nesta fase do compilador.`);
+            }
+
+            return {
+                nome: parametro.nome.lexema,
+                tipoDelegua,
+                tipoCil: this.mapearTipoCil(tipoDelegua),
+            };
+        });
+
+        const tipoRetornoDelegua = this.extrairTipoRetornoFuncao(declaracao);
+        this.funcoes.set(nome, {
+            nome,
+            nomeCil: nome,
+            tipoRetornoDelegua,
+            tipoRetornoCil: this.mapearTipoCil(tipoRetornoDelegua),
+            parametros,
+        });
+    }
+
+    private capturarEstadoCompilacao(): EstadoCompilacao {
+        return {
+            instrucoes: this.instrucoes,
+            variaveis: this.variaveis,
+            locaisTemporarios: this.locaisTemporarios,
+            proximoIndiceLocal: this.proximoIndiceLocal,
+            pilhaRotulosLoop: this.pilhaRotulosLoop,
+            funcaoAtual: this.funcaoAtual,
+        };
+    }
+
+    private restaurarEstadoCompilacao(estado: EstadoCompilacao): void {
+        this.instrucoes = estado.instrucoes;
+        this.variaveis = estado.variaveis;
+        this.locaisTemporarios = estado.locaisTemporarios;
+        this.proximoIndiceLocal = estado.proximoIndiceLocal;
+        this.pilhaRotulosLoop = estado.pilhaRotulosLoop;
+        this.funcaoAtual = estado.funcaoAtual;
+    }
+
     private resolverTipoConstruto(construto: any): string {
         if (construto instanceof Literal) {
             // O parser marca todo literal numérico genericamente como 'número',
@@ -322,6 +436,18 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         if (construto instanceof Logico) {
             return 'logico';
         }
+        if (construto instanceof Chamada) {
+            if (!(construto.entidadeChamada instanceof Variavel)) {
+                throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
+            }
+
+            const funcao = this.funcoes.get(construto.entidadeChamada.simbolo.lexema);
+            if (!funcao) {
+                throw new ErroCompilador(`Função '${construto.entidadeChamada.simbolo.lexema}' não declarada.`);
+            }
+
+            return funcao.tipoRetornoDelegua;
+        }
         if (construto instanceof Unario) {
             if (construto.operador.tipo === 'NEGACAO' || construto.operador.tipo === 'NAO') {
                 return 'logico';
@@ -355,8 +481,9 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         const indice = this.proximoIndiceLocal++;
         const tipoCil = this.mapearTipoCil(tipoDelegua);
-        this.variaveis.set(declaracao.simbolo.lexema, { indice, tipoCil, tipoDelegua });
-        this.instrucoes.push(`stloc ${indice}`);
+        const local = { indice, tipoCil, tipoDelegua, armazenamento: 'local' as const };
+        this.variaveis.set(declaracao.simbolo.lexema, local);
+        this.emitirArmazenamentoVariavel(local);
     }
 
     async visitarExpressaoLiteral(expressao: Literal): Promise<string> {
@@ -383,7 +510,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     async visitarExpressaoDeVariavel(expressao: Variavel): Promise<string> {
         const local = this.variaveis.get(expressao.simbolo.lexema);
         if (!local) throw new ErroCompilador(`Variável '${expressao.simbolo.lexema}' não declarada.`);
-        this.instrucoes.push(`ldloc ${local.indice}`);
+        this.emitirCarregamentoVariavel(local);
         return local.tipoDelegua;
     }
 
@@ -517,8 +644,50 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             this.instrucoes.push('conv.r8');
         }
 
-        this.instrucoes.push(`stloc ${local.indice}`);
+        this.emitirArmazenamentoVariavel(local);
         return local.tipoDelegua;
+    }
+
+    async visitarExpressaoDeChamada(expressao: Chamada): Promise<string> {
+        if (!(expressao.entidadeChamada instanceof Variavel)) {
+            throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
+        }
+
+        const funcao = this.funcoes.get(expressao.entidadeChamada.simbolo.lexema);
+        if (!funcao) {
+            throw new ErroCompilador(`Função '${expressao.entidadeChamada.simbolo.lexema}' não declarada.`);
+        }
+
+        if (expressao.argumentos.length !== funcao.parametros.length) {
+            throw new ErroCompilador(
+                `Função '${funcao.nome}' espera ${funcao.parametros.length} argumento(s), mas recebeu ${expressao.argumentos.length}.`
+            );
+        }
+
+        for (let indice = 0; indice < expressao.argumentos.length; indice++) {
+            const argumento = expressao.argumentos[indice];
+            const parametro = funcao.parametros[indice];
+            const tipoArgumento = this.resolverTipoConstruto(argumento);
+            const tipoCompativel =
+                tipoArgumento === parametro.tipoDelegua ||
+                (parametro.tipoDelegua === 'numero' && tipoArgumento === 'inteiro');
+
+            if (!tipoCompativel) {
+                throw new ErroCompilador(
+                    `Argumento ${indice + 1} da função '${funcao.nome}' deve ser '${parametro.tipoDelegua}', mas recebeu '${tipoArgumento}'.`
+                );
+            }
+
+            await argumento.aceitar(this as any);
+            if (parametro.tipoDelegua === 'numero' && tipoArgumento === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+        }
+
+        this.instrucoes.push(
+            `call ${funcao.tipoRetornoCil} Programa::${funcao.nomeCil}(${funcao.parametros.map((p) => p.tipoCil).join(', ')})`
+        );
+        return funcao.tipoRetornoDelegua;
     }
 
     async visitarDeclaracaoDeExpressao(declaracao: Expressao): Promise<any> {
@@ -571,7 +740,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         const localEscolha = this.reservarLocalTemporario(tipoEscolha);
         await declaracao.identificadorOuLiteral.aceitar(this as any);
-        this.instrucoes.push(`stloc ${localEscolha.indice}`);
+        this.emitirArmazenamentoVariavel(localEscolha);
 
         const rotuloFim = this.gerarRotulo();
 
@@ -602,6 +771,67 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         this.emitirRotulo(rotuloFim);
+    }
+
+    async visitarDeclaracaoDefinicaoFuncao(declaracao: FuncaoDeclaracao): Promise<any> {
+        if (this.funcaoAtual) {
+            throw new ErroCompilador('Funções aninhadas ainda não são suportadas neste compilador.');
+        }
+
+        const funcao = this.funcoes.get(declaracao.simbolo.lexema);
+        if (!funcao) {
+            throw new ErroCompilador(`Função '${declaracao.simbolo.lexema}' não registrada.`);
+        }
+
+        const estadoAnterior = this.capturarEstadoCompilacao();
+        this.instrucoes = [];
+        this.variaveis = new Map();
+        this.locaisTemporarios = [];
+        this.proximoIndiceLocal = 0;
+        this.pilhaRotulosLoop = [];
+        this.funcaoAtual = funcao;
+
+        try {
+            for (let indice = 0; indice < funcao.parametros.length; indice++) {
+                const parametro = funcao.parametros[indice];
+                this.variaveis.set(parametro.nome, {
+                    indice,
+                    tipoCil: parametro.tipoCil,
+                    tipoDelegua: parametro.tipoDelegua,
+                    armazenamento: 'argumento',
+                });
+            }
+
+            for (const item of declaracao.funcao.corpo) {
+                await item.aceitar(this as any);
+            }
+
+            if (funcao.tipoRetornoDelegua === 'vazio') {
+                this.instrucoes.push('ret');
+            }
+
+            const locaisOrdenados = [
+                ...Array.from(this.variaveis.values()).filter((variavel) => variavel.armazenamento === 'local'),
+                ...this.locaisTemporarios,
+            ].sort((a, b) => a.indice - b.indice);
+            const linhaLocais = locaisOrdenados.length
+                ? `    .locals init (${locaisOrdenados.map((local) => `${local.tipoCil} V_${local.indice}`).join(', ')})\n`
+                : '';
+            const corpo = this.instrucoes.map((instrucao) => `    ${instrucao}`).join('\n');
+
+            this.metodosCompilados.push(
+                `.method public static ${funcao.tipoRetornoCil} ${funcao.nomeCil}(${funcao.parametros
+                    .map((parametro) => `${parametro.tipoCil} ${parametro.nome}`)
+                    .join(', ')}) cil managed\n` +
+                    `{\n` +
+                    `    .maxstack 8\n` +
+                    linhaLocais +
+                    (corpo ? corpo + '\n' : '') +
+                    `}`
+            );
+        } finally {
+            this.restaurarEstadoCompilacao(estadoAnterior);
+        }
     }
 
     async visitarDeclaracaoEnquanto(declaracao: Enquanto): Promise<any> {
@@ -667,6 +897,43 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     async visitarExpressaoSustar(): Promise<any> {
         this.instrucoes.push(`br ${this.rotuloLoopAtual().sustar}`);
+    }
+
+    async visitarExpressaoRetornar(declaracao: Retorna): Promise<any> {
+        if (!this.funcaoAtual) {
+            throw new ErroCompilador('`retorna` só pode ser usado dentro de funções.');
+        }
+
+        if (this.funcaoAtual.tipoRetornoDelegua === 'vazio') {
+            if (declaracao.valor) {
+                throw new ErroCompilador(`Função '${this.funcaoAtual.nome}' não deve retornar valor.`);
+            }
+
+            this.instrucoes.push('ret');
+            return;
+        }
+
+        if (!declaracao.valor) {
+            throw new ErroCompilador(`Função '${this.funcaoAtual.nome}' deve retornar valor.`);
+        }
+
+        const tipoValor = this.resolverTipoConstruto(declaracao.valor);
+        const tipoCompativel =
+            tipoValor === this.funcaoAtual.tipoRetornoDelegua ||
+            (this.funcaoAtual.tipoRetornoDelegua === 'numero' && tipoValor === 'inteiro');
+
+        if (!tipoCompativel) {
+            throw new ErroCompilador(
+                `Função '${this.funcaoAtual.nome}' retorna '${this.funcaoAtual.tipoRetornoDelegua}', mas recebeu '${tipoValor}'.`
+            );
+        }
+
+        await declaracao.valor.aceitar(this as any);
+        if (this.funcaoAtual.tipoRetornoDelegua === 'numero' && tipoValor === 'inteiro') {
+            this.instrucoes.push('conv.r8');
+        }
+
+        this.instrucoes.push('ret');
     }
 
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {

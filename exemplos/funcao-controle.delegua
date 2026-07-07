@@ -1,0 +1,3 @@
+funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b }
+var x = soma(2, 3)
+se (x == 5) { escreva(x) }

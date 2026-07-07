@@ -1,0 +1,6 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "yarn jest": true,
+        "where": true
+    }
+}

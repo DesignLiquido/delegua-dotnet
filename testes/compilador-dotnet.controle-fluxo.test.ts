@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 import { CompiladorDotnet } from '../fontes/compilador-dotnet';
+import { ErroCompilador } from '../fontes/erros/erro-compilador';
 
 describe('CompiladorDotnet - Controle de fluxo', () => {
     it('Se com comparação numérica', async () => {
@@ -182,6 +183,73 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
 
         expect(resultado).toContain('ldc.i4 99');
         expect(resultado).toMatch(/br IL_\d{4}/);
+    });
+
+    it('Escolha com caso de tipo incompatível falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar(['var x = "texto"', 'escolha x {', 'caso 1:', '  escreva(1)', '}'])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Funcao com retorno explícito compila para método estático e chamada', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b }',
+            'escreva(soma(1, 2))',
+        ]);
+
+        expect(resultado).toContain('.method public static int32 soma(int32 a, int32 b) cil managed');
+        expect(resultado).toContain('ldarg 0');
+        expect(resultado).toContain('ldarg 1');
+        expect(resultado).toContain('call int32 Programa::soma(int32, int32)');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(int32)');
+    });
+
+    it('Funcao pode declarar variáveis locais e usá-las no retorno', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao dobro(a: inteiro): inteiro { var resultado = a + a retorna resultado }',
+            'escreva(dobro(3))',
+        ]);
+
+        expect(resultado).toContain('.method public static int32 dobro(int32 a) cil managed');
+        expect(resultado).toContain('.locals init (int32 V_0)');
+        expect(resultado).toContain('stloc 0');
+        expect(resultado).toContain('ldloc 0');
+    });
+
+    it('Funcao aninhada falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'funcao externa(a: inteiro): inteiro {',
+                '  funcao interna(b: inteiro): inteiro { retorna b }',
+                '  retorna interna(a)',
+                '}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Retorna sem valor em função não-vazia falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar(['funcao soma(a: inteiro, b: inteiro): inteiro { retorna }'])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Chamada com tipo de argumento incompatível falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'funcao soma(a: inteiro, b: inteiro): inteiro { retorna a + b }',
+                'escreva(soma("1", 2))',
+            ])
+        ).rejects.toThrow(ErroCompilador);
     });
 
     it('Nao lógico inverte condição booleana', async () => {
