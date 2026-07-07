@@ -1,0 +1,7 @@
+var v = [1, 2, 3]
+var mapa = { 1: "a", 2: "b" }
+escreva(v.tamanho())
+escreva(v.tamanho)
+escreva(mapa.tamanho())
+escreva(mapa.tamanho)
+escreva(mapa[2])

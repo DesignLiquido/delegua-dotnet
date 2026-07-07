@@ -388,6 +388,18 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('callvirt instance bool class [mscorlib]System.Collections.Generic.List`1<bool>::get_Item(int32)');
     });
 
+    it('Tamanho de vetor funciona como método e propriedade', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2, 3]',
+            'escreva(v.tamanho())',
+            'escreva(v.tamanho)',
+        ]);
+
+        expect(resultado.match(/get_Count\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(resultado.match(/WriteLine\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
     it('Dicionário literal compila para Dictionary com leitura por chave', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
@@ -399,6 +411,41 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('newobj instance void class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::.ctor()');
         expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::Add(string, int32)');
         expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::get_Item(string)');
+    });
+
+    it('Dicionário com chaves inteiras compila', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { 1: "a", 2: "b" }',
+            'escreva(mapa[2])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.Dictionary`2<int32, string>');
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.Dictionary`2<int32, string>::Add(int32, string)');
+        expect(resultado).toContain('callvirt instance string class [mscorlib]System.Collections.Generic.Dictionary`2<int32, string>::get_Item(int32)');
+    });
+
+    it('Dicionário com chaves lógicas compila', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { verdadeiro: 1, falso: 2 }',
+            'escreva(mapa[verdadeiro])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.Dictionary`2<bool, int32>');
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.Dictionary`2<bool, int32>::Add(bool, int32)');
+        expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.Dictionary`2<bool, int32>::get_Item(bool)');
+    });
+
+    it('Tamanho de dicionário funciona como método e propriedade', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { "a": 1, "b": 2 }',
+            'escreva(mapa.tamanho())',
+            'escreva(mapa.tamanho)',
+        ]);
+
+        expect(resultado.match(/Dictionary`2<string, int32>::get_Count\(\)/g)?.length).toBeGreaterThanOrEqual(2);
     });
 
     it('Atribuição por chave em dicionário atualiza valor', async () => {

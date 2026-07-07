@@ -24,7 +24,8 @@ Suporta apenas:
 - `continua` e `sustar` dentro de laços;
 - funções de topo com parâmetros tipados, sem parâmetros, retorno `vazio`, `retorna`, recursão e chamadas entre funções;
 - vetores homogêneos com literais, leitura por índice e atribuição por índice;
-- dicionários com chaves de texto, valores homogêneos, leitura por chave e atribuição por chave;
+- vetores e dicionários com `tamanho` como propriedade e método sem argumentos;
+- dicionários com chaves primitivas homogêneas, valores homogêneos, leitura por chave e atribuição por chave;
 - operadores lógicos `e`, `ou` e `nao` no subconjunto booleano;
 - `escreva(...)` com os tipos acima.
 

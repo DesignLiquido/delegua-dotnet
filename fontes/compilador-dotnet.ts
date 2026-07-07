@@ -1,4 +1,6 @@
 import {
+    AcessoMetodo,
+    AcessoMetodoOuPropriedade,
     AcessoIndiceVariavel,
     AtribuicaoPorIndice,
     Agrupamento,
@@ -166,6 +168,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipo.startsWith('dicionario<') && tipo.endsWith('>');
     }
 
+    private tipoEhPrimitivoSuportado(tipo: string): boolean {
+        return ['inteiro', 'numero', 'logico', 'texto'].includes(tipo);
+    }
+
     private normalizarTipoVetor(tipo: string): string {
         if (tipo === 'número[]') return 'numero[]';
         if (tipo === 'lógico[]') return 'logico[]';
@@ -197,6 +203,42 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         };
     }
 
+    private resolverTipoPrimitivoHomogeneo(construtos: any[], contexto: string): string {
+        if (!construtos.length) {
+            throw new ErroCompilador(`Não foi possível deduzir o tipo de ${contexto} vazio.`);
+        }
+
+        let tipo = this.resolverTipoConstruto(construtos[0]);
+        if (!this.tipoEhPrimitivoSuportado(tipo)) {
+            throw new ErroCompilador(`${contexto} suporta apenas tipos primitivos nesta fase do compilador.`);
+        }
+
+        for (let indice = 1; indice < construtos.length; indice++) {
+            const tipoAtual = this.resolverTipoConstruto(construtos[indice]);
+            const tiposCompativeis =
+                tipoAtual === tipo || (this.tipoEhNumerico(tipo) && this.tipoEhNumerico(tipoAtual));
+
+            if (!tiposCompativeis) {
+                throw new ErroCompilador(`${contexto} com tipos incompatíveis não é suportado nesta fase do compilador.`);
+            }
+
+            if (tipoAtual === 'numero') {
+                tipo = 'numero';
+            }
+        }
+
+        return tipo;
+    }
+
+    private async emitirConstrutoParaTipoEsperado(construto: any, tipoEsperado: string): Promise<void> {
+        const tipoAtual = this.resolverTipoConstruto(construto);
+        await construto.aceitar(this as any);
+
+        if (tipoEsperado === 'numero' && tipoAtual === 'inteiro') {
+            this.instrucoes.push('conv.r8');
+        }
+    }
+
     private mapearTipoElementoCil(tipoDelegua: string): string {
         return this.mapearTipoCil(tipoDelegua);
     }
@@ -207,6 +249,25 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private mapearTipoDicionarioCil(tipoChaveDelegua: string, tipoValorDelegua: string): string {
         return `class [mscorlib]System.Collections.Generic.Dictionary\`2<${this.mapearTipoElementoCil(tipoChaveDelegua)}, ${this.mapearTipoElementoCil(tipoValorDelegua)}>`;
+    }
+
+    private emitirCarregamentoTamanhoColecao(tipoColecao: string): void {
+        if (this.tipoEhVetor(tipoColecao)) {
+            this.instrucoes.push(
+                `callvirt instance int32 ${this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoColecao))}::get_Count()`
+            );
+            return;
+        }
+
+        if (this.tipoEhDicionario(tipoColecao)) {
+            const tipos = this.obterTiposDicionario(tipoColecao);
+            this.instrucoes.push(
+                `callvirt instance int32 ${this.mapearTipoDicionarioCil(tipos.chave, tipos.valor)}::get_Count()`
+            );
+            return;
+        }
+
+        throw new ErroCompilador(`Tipo '${tipoColecao}' não possui 'tamanho'.`);
     }
 
     private emitirCarregamentoVariavel(local: VariavelLocal): void {
@@ -517,36 +578,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return `${tipoNormalizado}[]`;
         }
         if (construto instanceof Dicionario) {
-            if (!construto.chaves.length) {
-                throw new ErroCompilador('Não foi possível deduzir o tipo de um dicionário vazio.');
-            }
-
-            const tipoChave = 'texto';
-            const primeiraChave = construto.chaves[0];
-            if (!(primeiraChave instanceof Literal) || this.resolverTipoConstruto(primeiraChave) !== 'texto') {
-                throw new ErroCompilador('Dicionários suportam apenas chaves de texto nesta fase do compilador.');
-            }
-
-            const tipoPrimeiroValor = this.resolverTipoConstruto(construto.valores[0]);
-            let tipoValor = tipoPrimeiroValor;
-            for (let indice = 0; indice < construto.chaves.length; indice++) {
-                const chaveAtual = construto.chaves[indice];
-                if (!(chaveAtual instanceof Literal) || this.resolverTipoConstruto(chaveAtual) !== 'texto') {
-                    throw new ErroCompilador('Dicionários suportam apenas chaves de texto nesta fase do compilador.');
-                }
-
-                const tipoAtual = this.resolverTipoConstruto(construto.valores[indice]);
-                const tiposCompativeis =
-                    tipoAtual === tipoValor || (this.tipoEhNumerico(tipoValor) && this.tipoEhNumerico(tipoAtual));
-                if (!tiposCompativeis) {
-                    throw new ErroCompilador('Dicionário com valores de tipos incompatíveis não é suportado nesta fase do compilador.');
-                }
-
-                if (tipoAtual === 'numero') {
-                    tipoValor = 'numero';
-                }
-            }
-
+            const tipoChave = this.resolverTipoPrimitivoHomogeneo(construto.chaves, 'dicionário');
+            const tipoValor = this.resolverTipoPrimitivoHomogeneo(construto.valores, 'dicionário');
             return this.criarTipoDicionario(tipoChave, tipoValor);
         }
         if (construto instanceof Variavel) {
@@ -598,6 +631,14 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             }
 
             throw new ErroCompilador('Acesso por índice suportado apenas para vetores e dicionários nesta fase do compilador.');
+        }
+        if (construto instanceof AcessoMetodoOuPropriedade) {
+            const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
+            if (construto.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
+                return 'inteiro';
+            }
+
+            throw new ErroCompilador(`Acesso '${construto.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
         }
         if (construto instanceof Unario) {
             if (construto.operador.tipo === 'NEGACAO' || construto.operador.tipo === 'NAO') {
@@ -683,23 +724,19 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         const tipoDicionario = this.resolverTipoConstruto(expressao);
         const tipos = this.obterTiposDicionario(tipoDicionario);
         const tipoDicionarioCil = this.mapearTipoDicionarioCil(tipos.chave, tipos.valor);
+        const tipoChaveCil = this.mapearTipoElementoCil(tipos.chave);
         const tipoValorCil = this.mapearTipoElementoCil(tipos.valor);
 
         this.instrucoes.push(`newobj instance void ${tipoDicionarioCil}::.ctor()`);
 
         for (let indice = 0; indice < expressao.chaves.length; indice++) {
             this.instrucoes.push('dup');
-            const chave = expressao.chaves[indice] as Literal;
-            this.instrucoes.push(`ldstr "${this.escaparTexto(chave.valor as string)}"`);
+            await this.emitirConstrutoParaTipoEsperado(expressao.chaves[indice], tipos.chave);
 
             const valor = expressao.valores[indice];
-            const tipoValorAtual = this.resolverTipoConstruto(valor);
-            await valor.aceitar(this as any);
-            if (tipos.valor === 'numero' && tipoValorAtual === 'inteiro') {
-                this.instrucoes.push('conv.r8');
-            }
+            await this.emitirConstrutoParaTipoEsperado(valor, tipos.valor);
 
-            this.instrucoes.push(`callvirt instance void ${tipoDicionarioCil}::Add(string, ${tipoValorCil})`);
+            this.instrucoes.push(`callvirt instance void ${tipoDicionarioCil}::Add(${tipoChaveCil}, ${tipoValorCil})`);
         }
 
         return tipoDicionario;
@@ -736,12 +773,13 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         if (this.tipoEhDicionario(tipoEntidade)) {
             const tipos = this.obterTiposDicionario(tipoEntidade);
             const tipoIndice = this.resolverTipoConstruto(expressao.indice);
-            if (tipoIndice !== tipos.chave) {
+            const indiceCompativel = tipoIndice === tipos.chave || (tipos.chave === 'numero' && tipoIndice === 'inteiro');
+            if (!indiceCompativel) {
                 throw new ErroCompilador(`Índice de dicionário deve ser '${tipos.chave}'.`);
             }
 
             await expressao.entidadeChamada.aceitar(this as any);
-            await expressao.indice.aceitar(this as any);
+            await this.emitirConstrutoParaTipoEsperado(expressao.indice, tipos.chave);
             this.instrucoes.push(
                 `callvirt instance ${this.mapearTipoElementoCil(tipos.valor)} ${this.mapearTipoDicionarioCil(tipos.chave, tipos.valor)}::get_Item(${this.mapearTipoElementoCil(tipos.chave)})`
             );
@@ -920,7 +958,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         if (this.tipoEhDicionario(tipoObjeto)) {
             const tipos = this.obterTiposDicionario(tipoObjeto);
             const tipoIndice = this.resolverTipoConstruto(expressao.indice);
-            if (tipoIndice !== tipos.chave) {
+            const indiceCompativel = tipoIndice === tipos.chave || (tipos.chave === 'numero' && tipoIndice === 'inteiro');
+            if (!indiceCompativel) {
                 throw new ErroCompilador(`Índice de dicionário deve ser '${tipos.chave}'.`);
             }
 
@@ -938,11 +977,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             const tipoValorCil = this.mapearTipoElementoCil(tipos.valor);
 
             await expressao.objeto.aceitar(this as any);
-            await expressao.indice.aceitar(this as any);
-            await expressao.valor.aceitar(this as any);
-            if (tipos.valor === 'numero' && tipoValor === 'inteiro') {
-                this.instrucoes.push('conv.r8');
-            }
+            await this.emitirConstrutoParaTipoEsperado(expressao.indice, tipos.chave);
+            await this.emitirConstrutoParaTipoEsperado(expressao.valor, tipos.valor);
 
             this.instrucoes.push(`callvirt instance void ${tipoDicionarioCil}::set_Item(${tipoChaveCil}, ${tipoValorCil})`);
             return;
@@ -952,6 +988,36 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<string> {
+        if (expressao.entidadeChamada instanceof AcessoMetodo) {
+            const tipoObjeto = this.resolverTipoConstruto(expressao.entidadeChamada.objeto);
+            if (expressao.argumentos.length !== 0) {
+                throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não aceita argumentos nesta fase do compilador.`);
+            }
+
+            if (expressao.entidadeChamada.nomeMetodo === 'tamanho') {
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                this.emitirCarregamentoTamanhoColecao(tipoObjeto);
+                return 'inteiro';
+            }
+
+            throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+        }
+
+        if (expressao.entidadeChamada instanceof AcessoMetodoOuPropriedade) {
+            const tipoObjeto = this.resolverTipoConstruto(expressao.entidadeChamada.objeto);
+            if (expressao.argumentos.length !== 0) {
+                throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não aceita argumentos nesta fase do compilador.`);
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'tamanho') {
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                this.emitirCarregamentoTamanhoColecao(tipoObjeto);
+                return 'inteiro';
+            }
+
+            throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+        }
+
         if (!(expressao.entidadeChamada instanceof Variavel)) {
             throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
         }
@@ -999,6 +1065,17 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         if (this.construtoDeixaValorNaPilha(declaracao.expressao)) {
             this.instrucoes.push('pop');
         }
+    }
+
+    async visitarExpressaoAcessoMetodoOuPropriedade(expressao: AcessoMetodoOuPropriedade): Promise<string> {
+        const tipoObjeto = this.resolverTipoConstruto(expressao.objeto);
+        if (expressao.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
+            await expressao.objeto.aceitar(this as any);
+            this.emitirCarregamentoTamanhoColecao(tipoObjeto);
+            return 'inteiro';
+        }
+
+        throw new ErroCompilador(`Acesso '${expressao.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
     }
 
     async visitarExpressaoBloco(declaracao: Bloco): Promise<any> {
