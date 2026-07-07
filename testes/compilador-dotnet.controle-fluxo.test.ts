@@ -112,6 +112,78 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado.match(/call void \[mscorlib\]System\.Console::WriteLine\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('Escolha com casos inteiros usa a primeira correspondência', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var x = 2',
+            'escolha x {',
+            'caso 1:',
+            '  escreva(1)',
+            'caso 2:',
+            '  escreva(2)',
+            'padrao:',
+            '  escreva(0)',
+            '}',
+        ]);
+
+        expect(resultado).toContain('.locals init (int32 V_0, int32 V_1)');
+        expect(resultado).toContain('ldloc 1');
+        expect(resultado).toContain('ceq');
+        expect(resultado).toContain('ldc.i4 2');
+        expect(resultado).toContain('ldc.i4 0');
+    });
+
+    it('Escolha aceita múltiplos caso para o mesmo bloco', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var x = 3',
+            'escolha x {',
+            'caso 1:',
+            'caso 3:',
+            '  escreva(13)',
+            'padrao:',
+            '  escreva(0)',
+            '}',
+        ]);
+
+        expect(resultado.match(/brtrue IL_\d{4}/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(resultado).toContain('ldc.i4 13');
+    });
+
+    it('Escolha compara textos', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var nome = "delegua"',
+            'escolha nome {',
+            'caso "java":',
+            '  escreva(1)',
+            'caso "delegua":',
+            '  escreva(2)',
+            'padrao:',
+            '  escreva(0)',
+            '}',
+        ]);
+
+        expect(resultado).toContain('call bool [mscorlib]System.String::op_Equality(string, string)');
+        expect(resultado).toContain('ldc.i4 2');
+    });
+
+    it('Escolha usa padrao quando nenhum caso corresponde', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var x = 9',
+            'escolha x {',
+            'caso 1:',
+            '  escreva(1)',
+            'padrao:',
+            '  escreva(99)',
+            '}',
+        ]);
+
+        expect(resultado).toContain('ldc.i4 99');
+        expect(resultado).toMatch(/br IL_\d{4}/);
+    });
+
     it('Nao lógico inverte condição booleana', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar(['se (nao falso) { escreva(7) }']);

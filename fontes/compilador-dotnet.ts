@@ -6,6 +6,7 @@ import {
     Bloco,
     Declaracao,
     Enquanto,
+    Escolha,
     Escreva,
     Expressao,
     Lexador,
@@ -37,8 +38,9 @@ const MAPA_TIPOS_CIL: Record<string, string> = {
 /**
  * Compilador Delégua → CIL (.NET).
  * Suporta o núcleo da fatia inicial (`var`, leitura de variáveis, aritmética,
- * `escreva`) e a primeira etapa de controle de fluxo (`se`/`senao`,
- * `enquanto`, atribuição local, comparações, `e`/`ou`, `nao`).
+ * `escreva`) e a etapa atual de controle de fluxo (`se`/`senao`,
+ * `enquanto`, `para`, `escolha`, `continua`, `sustar`, atribuição local,
+ * comparações, `e`/`ou`, `nao`).
  * Demais construtos continuam lançando `ErroCompilador`
  * (ver `VisitanteBaseNaoImplementado`).
  */
@@ -48,6 +50,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private instrucoes: string[];
     private variaveis: Map<string, VariavelLocal>;
+    private locaisTemporarios: VariavelLocal[];
     private proximoIndiceLocal: number;
     private proximoRotulo: number;
     private pilhaRotulosLoop: Array<{ continua: string; sustar: string }>;
@@ -61,6 +64,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     async compilar(codigo: string[]): Promise<string> {
         this.instrucoes = [];
         this.variaveis = new Map();
+        this.locaisTemporarios = [];
         this.proximoIndiceLocal = 0;
         this.proximoRotulo = 0;
         this.pilhaRotulosLoop = [];
@@ -77,7 +81,9 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     private montarModulo(): string {
-        const locaisOrdenados = Array.from(this.variaveis.values()).sort((a, b) => a.indice - b.indice);
+        const locaisOrdenados = [...Array.from(this.variaveis.values()), ...this.locaisTemporarios].sort(
+            (a, b) => a.indice - b.indice
+        );
         const locais = locaisOrdenados.map((v) => `${v.tipoCil} V_${v.indice}`).join(', ');
         const linhaLocais = locais ? `    .locals init (${locais})\n` : '';
         const corpo = this.instrucoes.map((instrucao) => `    ${instrucao}`).join('\n');
@@ -107,6 +113,14 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipo === 'inteiro' || tipo === 'numero';
     }
 
+    private tiposCompativeisParaIgualdade(tipoEsquerdo: string, tipoDireito: string): boolean {
+        if (this.tipoEhNumerico(tipoEsquerdo) && this.tipoEhNumerico(tipoDireito)) {
+            return true;
+        }
+
+        return tipoEsquerdo === tipoDireito && ['texto', 'logico'].includes(tipoEsquerdo);
+    }
+
     private gerarRotulo(): string {
         const sufixo = this.proximoRotulo.toString().padStart(4, '0');
         this.proximoRotulo += 1;
@@ -115,6 +129,17 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private emitirRotulo(rotulo: string): void {
         this.instrucoes.push(`${rotulo}:`);
+    }
+
+    private reservarLocalTemporario(tipoDelegua: string): VariavelLocal {
+        const local = {
+            indice: this.proximoIndiceLocal++,
+            tipoCil: this.mapearTipoCil(tipoDelegua),
+            tipoDelegua,
+        };
+
+        this.locaisTemporarios.push(local);
+        return local;
     }
 
     private rotuloLoopAtual(): { continua: string; sustar: string } {
@@ -215,6 +240,42 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         throw new ErroCompilador(`Comparação '${expressao.operador.lexema}' não implementada para '${tipoEsquerdo}' e '${tipoDireito}'.`);
+    }
+
+    private async emitirComparacaoIgualdadeComLocal(local: VariavelLocal, construto: any): Promise<void> {
+        const tipoConstruto = this.resolverTipoConstruto(construto);
+
+        if (!this.tiposCompativeisParaIgualdade(local.tipoDelegua, tipoConstruto)) {
+            throw new ErroCompilador(
+                `Não pode comparar valor do tipo '${local.tipoDelegua}' com caso do tipo '${tipoConstruto}' em 'escolha'.`
+            );
+        }
+
+        if (this.tipoEhNumerico(local.tipoDelegua) && this.tipoEhNumerico(tipoConstruto)) {
+            const tipoPrevalente = local.tipoDelegua === 'numero' || tipoConstruto === 'numero' ? 'numero' : 'inteiro';
+            this.instrucoes.push(`ldloc ${local.indice}`);
+            if (local.tipoDelegua !== tipoPrevalente) {
+                this.instrucoes.push('conv.r8');
+            }
+
+            await construto.aceitar(this as any);
+            if (tipoConstruto !== tipoPrevalente) {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push('ceq');
+            return;
+        }
+
+        this.instrucoes.push(`ldloc ${local.indice}`);
+        await construto.aceitar(this as any);
+
+        if (local.tipoDelegua === 'texto') {
+            this.instrucoes.push('call bool [mscorlib]System.String::op_Equality(string, string)');
+            return;
+        }
+
+        this.instrucoes.push('ceq');
     }
 
     private mapearTipoCil(tipoDelegua: string): string {
@@ -497,6 +558,47 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         if (declaracao.caminhoSenao) {
             await declaracao.caminhoSenao.aceitar(this as any);
+        }
+
+        this.emitirRotulo(rotuloFim);
+    }
+
+    async visitarDeclaracaoEscolha(declaracao: Escolha): Promise<any> {
+        const tipoEscolha = this.resolverTipoConstruto(declaracao.identificadorOuLiteral);
+        if (!['inteiro', 'numero', 'texto', 'logico'].includes(tipoEscolha)) {
+            throw new ErroCompilador(`Tipo '${tipoEscolha}' não suportado em 'escolha'.`);
+        }
+
+        const localEscolha = this.reservarLocalTemporario(tipoEscolha);
+        await declaracao.identificadorOuLiteral.aceitar(this as any);
+        this.instrucoes.push(`stloc ${localEscolha.indice}`);
+
+        const rotuloFim = this.gerarRotulo();
+
+        for (const caminho of declaracao.caminhos) {
+            const rotuloExecutar = this.gerarRotulo();
+            const rotuloProximoCaminho = this.gerarRotulo();
+
+            for (const condicao of caminho.condicoes) {
+                await this.emitirComparacaoIgualdadeComLocal(localEscolha, condicao);
+                this.instrucoes.push(`brtrue ${rotuloExecutar}`);
+            }
+
+            this.instrucoes.push(`br ${rotuloProximoCaminho}`);
+            this.emitirRotulo(rotuloExecutar);
+
+            for (const item of caminho.declaracoes) {
+                await item.aceitar(this as any);
+            }
+
+            this.instrucoes.push(`br ${rotuloFim}`);
+            this.emitirRotulo(rotuloProximoCaminho);
+        }
+
+        if (declaracao.caminhoPadrao?.declaracoes) {
+            for (const item of declaracao.caminhoPadrao.declaracoes) {
+                await item.aceitar(this as any);
+            }
         }
 
         this.emitirRotulo(rotuloFim);
