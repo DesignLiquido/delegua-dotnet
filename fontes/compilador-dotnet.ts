@@ -8,6 +8,7 @@ import {
     Bloco,
     Chamada,
     Declaracao,
+    Dicionario,
     Enquanto,
     Escolha,
     Escreva,
@@ -161,6 +162,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipo.endsWith('[]');
     }
 
+    private tipoEhDicionario(tipo: string): boolean {
+        return tipo.startsWith('dicionario<') && tipo.endsWith('>');
+    }
+
     private normalizarTipoVetor(tipo: string): string {
         if (tipo === 'número[]') return 'numero[]';
         if (tipo === 'lógico[]') return 'logico[]';
@@ -175,12 +180,33 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return this.normalizarTipo(tipo.slice(0, -2));
     }
 
+    private criarTipoDicionario(tipoChave: string, tipoValor: string): string {
+        return `dicionario<${tipoChave},${tipoValor}>`;
+    }
+
+    private obterTiposDicionario(tipo: string): { chave: string; valor: string } {
+        if (!this.tipoEhDicionario(tipo)) {
+            throw new ErroCompilador(`Tipo '${tipo}' não é um dicionário.`);
+        }
+
+        const conteudo = tipo.slice('dicionario<'.length, -1);
+        const separador = conteudo.indexOf(',');
+        return {
+            chave: conteudo.slice(0, separador),
+            valor: conteudo.slice(separador + 1),
+        };
+    }
+
     private mapearTipoElementoCil(tipoDelegua: string): string {
         return this.mapearTipoCil(tipoDelegua);
     }
 
     private mapearTipoVetorCil(tipoElementoDelegua: string): string {
         return `class [mscorlib]System.Collections.Generic.List\`1<${this.mapearTipoElementoCil(tipoElementoDelegua)}>`;
+    }
+
+    private mapearTipoDicionarioCil(tipoChaveDelegua: string, tipoValorDelegua: string): string {
+        return `class [mscorlib]System.Collections.Generic.Dictionary\`2<${this.mapearTipoElementoCil(tipoChaveDelegua)}, ${this.mapearTipoElementoCil(tipoValorDelegua)}>`;
     }
 
     private emitirCarregamentoVariavel(local: VariavelLocal): void {
@@ -374,6 +400,11 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoDelegua));
         }
 
+        if (this.tipoEhDicionario(tipoDelegua)) {
+            const tipos = this.obterTiposDicionario(tipoDelegua);
+            return this.mapearTipoDicionarioCil(tipos.chave, tipos.valor);
+        }
+
         const tipoCil = MAPA_TIPOS_CIL[tipoDelegua];
         if (!tipoCil) {
             throw new ErroCompilador(`Tipo '${tipoDelegua}' não implementado para .NET.`);
@@ -485,6 +516,39 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             return `${tipoNormalizado}[]`;
         }
+        if (construto instanceof Dicionario) {
+            if (!construto.chaves.length) {
+                throw new ErroCompilador('Não foi possível deduzir o tipo de um dicionário vazio.');
+            }
+
+            const tipoChave = 'texto';
+            const primeiraChave = construto.chaves[0];
+            if (!(primeiraChave instanceof Literal) || this.resolverTipoConstruto(primeiraChave) !== 'texto') {
+                throw new ErroCompilador('Dicionários suportam apenas chaves de texto nesta fase do compilador.');
+            }
+
+            const tipoPrimeiroValor = this.resolverTipoConstruto(construto.valores[0]);
+            let tipoValor = tipoPrimeiroValor;
+            for (let indice = 0; indice < construto.chaves.length; indice++) {
+                const chaveAtual = construto.chaves[indice];
+                if (!(chaveAtual instanceof Literal) || this.resolverTipoConstruto(chaveAtual) !== 'texto') {
+                    throw new ErroCompilador('Dicionários suportam apenas chaves de texto nesta fase do compilador.');
+                }
+
+                const tipoAtual = this.resolverTipoConstruto(construto.valores[indice]);
+                const tiposCompativeis =
+                    tipoAtual === tipoValor || (this.tipoEhNumerico(tipoValor) && this.tipoEhNumerico(tipoAtual));
+                if (!tiposCompativeis) {
+                    throw new ErroCompilador('Dicionário com valores de tipos incompatíveis não é suportado nesta fase do compilador.');
+                }
+
+                if (tipoAtual === 'numero') {
+                    tipoValor = 'numero';
+                }
+            }
+
+            return this.criarTipoDicionario(tipoChave, tipoValor);
+        }
         if (construto instanceof Variavel) {
             const local = this.variaveis.get(construto.simbolo.lexema);
             if (!local) throw new ErroCompilador(`Variável '${construto.simbolo.lexema}' não declarada.`);
@@ -525,11 +589,15 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
         if (construto instanceof AcessoIndiceVariavel) {
             const tipoEntidade = this.resolverTipoConstruto(construto.entidadeChamada);
-            if (!this.tipoEhVetor(tipoEntidade)) {
-                throw new ErroCompilador('Acesso por índice suportado apenas para vetores nesta fase do compilador.');
+            if (this.tipoEhVetor(tipoEntidade)) {
+                return this.obterTipoElementoVetor(tipoEntidade);
             }
 
-            return this.obterTipoElementoVetor(tipoEntidade);
+            if (this.tipoEhDicionario(tipoEntidade)) {
+                return this.obterTiposDicionario(tipoEntidade).valor;
+            }
+
+            throw new ErroCompilador('Acesso por índice suportado apenas para vetores e dicionários nesta fase do compilador.');
         }
         if (construto instanceof Unario) {
             if (construto.operador.tipo === 'NEGACAO' || construto.operador.tipo === 'NAO') {
@@ -611,6 +679,32 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         return tipoVetor;
     }
 
+    async visitarExpressaoDicionario(expressao: Dicionario): Promise<string> {
+        const tipoDicionario = this.resolverTipoConstruto(expressao);
+        const tipos = this.obterTiposDicionario(tipoDicionario);
+        const tipoDicionarioCil = this.mapearTipoDicionarioCil(tipos.chave, tipos.valor);
+        const tipoValorCil = this.mapearTipoElementoCil(tipos.valor);
+
+        this.instrucoes.push(`newobj instance void ${tipoDicionarioCil}::.ctor()`);
+
+        for (let indice = 0; indice < expressao.chaves.length; indice++) {
+            this.instrucoes.push('dup');
+            const chave = expressao.chaves[indice] as Literal;
+            this.instrucoes.push(`ldstr "${this.escaparTexto(chave.valor as string)}"`);
+
+            const valor = expressao.valores[indice];
+            const tipoValorAtual = this.resolverTipoConstruto(valor);
+            await valor.aceitar(this as any);
+            if (tipos.valor === 'numero' && tipoValorAtual === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push(`callvirt instance void ${tipoDicionarioCil}::Add(string, ${tipoValorCil})`);
+        }
+
+        return tipoDicionario;
+    }
+
     async visitarExpressaoDeVariavel(expressao: Variavel): Promise<string> {
         const local = this.variaveis.get(expressao.simbolo.lexema);
         if (!local) throw new ErroCompilador(`Variável '${expressao.simbolo.lexema}' não declarada.`);
@@ -620,26 +714,41 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     async visitarExpressaoAcessoIndiceVariavel(expressao: AcessoIndiceVariavel): Promise<string> {
         const tipoEntidade = this.resolverTipoConstruto(expressao.entidadeChamada);
-        if (!this.tipoEhVetor(tipoEntidade)) {
-            throw new ErroCompilador('Acesso por índice suportado apenas para vetores nesta fase do compilador.');
+        if (this.tipoEhVetor(tipoEntidade)) {
+            const tipoElemento = this.obterTipoElementoVetor(tipoEntidade);
+            const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
+            const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+            const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+            if (!this.tipoEhNumerico(tipoIndice)) {
+                throw new ErroCompilador('Índice de vetor deve ser numérico.');
+            }
+
+            await expressao.entidadeChamada.aceitar(this as any);
+            await expressao.indice.aceitar(this as any);
+            if (tipoIndice === 'numero') {
+                throw new ErroCompilador('Índice de vetor deve ser inteiro nesta fase do compilador.');
+            }
+
+            this.instrucoes.push(`callvirt instance ${tipoElementoCil} ${tipoVetorCil}::get_Item(int32)`);
+            return tipoElemento;
         }
 
-        const tipoElemento = this.obterTipoElementoVetor(tipoEntidade);
-        const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
-        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
-        const tipoIndice = this.resolverTipoConstruto(expressao.indice);
-        if (!this.tipoEhNumerico(tipoIndice)) {
-            throw new ErroCompilador('Índice de vetor deve ser numérico.');
+        if (this.tipoEhDicionario(tipoEntidade)) {
+            const tipos = this.obterTiposDicionario(tipoEntidade);
+            const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+            if (tipoIndice !== tipos.chave) {
+                throw new ErroCompilador(`Índice de dicionário deve ser '${tipos.chave}'.`);
+            }
+
+            await expressao.entidadeChamada.aceitar(this as any);
+            await expressao.indice.aceitar(this as any);
+            this.instrucoes.push(
+                `callvirt instance ${this.mapearTipoElementoCil(tipos.valor)} ${this.mapearTipoDicionarioCil(tipos.chave, tipos.valor)}::get_Item(${this.mapearTipoElementoCil(tipos.chave)})`
+            );
+            return tipos.valor;
         }
 
-        await expressao.entidadeChamada.aceitar(this as any);
-        await expressao.indice.aceitar(this as any);
-        if (tipoIndice === 'numero') {
-            throw new ErroCompilador('Índice de vetor deve ser inteiro nesta fase do compilador.');
-        }
-
-        this.instrucoes.push(`callvirt instance ${tipoElementoCil} ${tipoVetorCil}::get_Item(int32)`);
-        return tipoElemento;
+        throw new ErroCompilador('Acesso por índice suportado apenas para vetores e dicionários nesta fase do compilador.');
     }
 
     async visitarExpressaoAgrupamento(expressao: Agrupamento): Promise<string> {
@@ -778,36 +887,68 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     async visitarExpressaoAtribuicaoPorIndice(expressao: AtribuicaoPorIndice): Promise<any> {
         const tipoObjeto = this.resolverTipoConstruto(expressao.objeto);
-        if (!this.tipoEhVetor(tipoObjeto)) {
-            throw new ErroCompilador('Atribuição por índice suportada apenas para vetores nesta fase do compilador.');
+        if (this.tipoEhVetor(tipoObjeto)) {
+            const tipoElemento = this.obterTipoElementoVetor(tipoObjeto);
+            const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+            if (!this.tipoEhNumerico(tipoIndice) || tipoIndice === 'numero') {
+                throw new ErroCompilador('Índice de vetor deve ser inteiro nesta fase do compilador.');
+            }
+
+            const tipoValor = this.resolverTipoConstruto(expressao.valor);
+            const tipoCompativel =
+                tipoValor === tipoElemento || (tipoElemento === 'numero' && tipoValor === 'inteiro');
+            if (!tipoCompativel) {
+                throw new ErroCompilador(
+                    `Não pode atribuir valor do tipo '${tipoValor}' a vetor de elementos '${tipoElemento}'.`
+                );
+            }
+
+            const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
+            const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+
+            await expressao.objeto.aceitar(this as any);
+            await expressao.indice.aceitar(this as any);
+            await expressao.valor.aceitar(this as any);
+            if (tipoElemento === 'numero' && tipoValor === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push(`callvirt instance void ${tipoVetorCil}::set_Item(int32, ${tipoElementoCil})`);
+            return;
         }
 
-        const tipoElemento = this.obterTipoElementoVetor(tipoObjeto);
-        const tipoIndice = this.resolverTipoConstruto(expressao.indice);
-        if (!this.tipoEhNumerico(tipoIndice) || tipoIndice === 'numero') {
-            throw new ErroCompilador('Índice de vetor deve ser inteiro nesta fase do compilador.');
+        if (this.tipoEhDicionario(tipoObjeto)) {
+            const tipos = this.obterTiposDicionario(tipoObjeto);
+            const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+            if (tipoIndice !== tipos.chave) {
+                throw new ErroCompilador(`Índice de dicionário deve ser '${tipos.chave}'.`);
+            }
+
+            const tipoValor = this.resolverTipoConstruto(expressao.valor);
+            const tipoCompativel =
+                tipoValor === tipos.valor || (tipos.valor === 'numero' && tipoValor === 'inteiro');
+            if (!tipoCompativel) {
+                throw new ErroCompilador(
+                    `Não pode atribuir valor do tipo '${tipoValor}' a dicionário de valores '${tipos.valor}'.`
+                );
+            }
+
+            const tipoDicionarioCil = this.mapearTipoDicionarioCil(tipos.chave, tipos.valor);
+            const tipoChaveCil = this.mapearTipoElementoCil(tipos.chave);
+            const tipoValorCil = this.mapearTipoElementoCil(tipos.valor);
+
+            await expressao.objeto.aceitar(this as any);
+            await expressao.indice.aceitar(this as any);
+            await expressao.valor.aceitar(this as any);
+            if (tipos.valor === 'numero' && tipoValor === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push(`callvirt instance void ${tipoDicionarioCil}::set_Item(${tipoChaveCil}, ${tipoValorCil})`);
+            return;
         }
 
-        const tipoValor = this.resolverTipoConstruto(expressao.valor);
-        const tipoCompativel =
-            tipoValor === tipoElemento || (tipoElemento === 'numero' && tipoValor === 'inteiro');
-        if (!tipoCompativel) {
-            throw new ErroCompilador(
-                `Não pode atribuir valor do tipo '${tipoValor}' a vetor de elementos '${tipoElemento}'.`
-            );
-        }
-
-        const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
-        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
-
-        await expressao.objeto.aceitar(this as any);
-        await expressao.indice.aceitar(this as any);
-        await expressao.valor.aceitar(this as any);
-        if (tipoElemento === 'numero' && tipoValor === 'inteiro') {
-            this.instrucoes.push('conv.r8');
-        }
-
-        this.instrucoes.push(`callvirt instance void ${tipoVetorCil}::set_Item(int32, ${tipoElementoCil})`);
+        throw new ErroCompilador('Atribuição por índice suportada apenas para vetores e dicionários nesta fase do compilador.');
     }
 
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<string> {

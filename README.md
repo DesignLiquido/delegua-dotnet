@@ -22,12 +22,13 @@ Suporta apenas:
 - `para`;
 - `escolha`/`caso`/`padrao`;
 - `continua` e `sustar` dentro de laços;
-- funções de topo com parâmetros tipados, sem parâmetros, retorno `vazio`, `retorna` e chamadas diretas;
+- funções de topo com parâmetros tipados, sem parâmetros, retorno `vazio`, `retorna`, recursão e chamadas entre funções;
 - vetores homogêneos com literais, leitura por índice e atribuição por índice;
+- dicionários com chaves de texto, valores homogêneos, leitura por chave e atribuição por chave;
 - operadores lógicos `e`, `ou` e `nao` no subconjunto booleano;
 - `escreva(...)` com os tipos acima.
 
-Todo o restante da gramática (classes, dicionários, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
+Todo o restante da gramática (classes, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
 
 ## Mapeamento de tipos (nesta versão)
 

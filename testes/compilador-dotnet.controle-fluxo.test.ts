@@ -256,6 +256,31 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(float64)');
     });
 
+    it('Funcao recursiva pode chamar a si mesma', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao fib(n: inteiro): inteiro { se (n <= 1) { retorna n } retorna fib(n - 1) + fib(n - 2) }',
+            'escreva(fib(3))',
+        ]);
+
+        expect(resultado).toContain('.method public static int32 fib(int32 n) cil managed');
+        expect(resultado.match(/call int32 Programa::fib\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Funções podem encadear chamadas entre si', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'funcao dobro(x: inteiro): inteiro { retorna x + x }',
+            'funcao somaDobro(x: inteiro): inteiro { retorna dobro(x) + dobro(x) }',
+            'escreva(somaDobro(2))',
+        ]);
+
+        expect(resultado).toContain('.method public static int32 dobro(int32 x) cil managed');
+        expect(resultado).toContain('.method public static int32 somaDobro(int32 x) cil managed');
+        expect(resultado.match(/call int32 Programa::dobro\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(resultado).toContain('call int32 Programa::somaDobro(int32)');
+    });
+
     it('Funcao aninhada falha na compilação', async () => {
         const compilador = new CompiladorDotnet();
 
@@ -326,6 +351,74 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
 
         await expect(
             compilador.compilar(['var itens = [1, 2, 3]', 'itens[1] = "texto"'])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Vetor numérico misto promove para float64', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var numeros = [1, 2.5, 3]',
+            'escreva(numeros[1])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.List`1<float64>');
+        expect(resultado).toContain('conv.r8');
+        expect(resultado).toContain('callvirt instance float64 class [mscorlib]System.Collections.Generic.List`1<float64>::get_Item(int32)');
+    });
+
+    it('Vetor de textos compila', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var textos = ["a", "b"]',
+            'escreva(textos[1])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.List`1<string>');
+        expect(resultado).toContain('callvirt instance string class [mscorlib]System.Collections.Generic.List`1<string>::get_Item(int32)');
+    });
+
+    it('Vetor de lógicos compila', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var logicos = [verdadeiro, falso]',
+            'escreva(logicos[0])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.List`1<bool>');
+        expect(resultado).toContain('callvirt instance bool class [mscorlib]System.Collections.Generic.List`1<bool>::get_Item(int32)');
+    });
+
+    it('Dicionário literal compila para Dictionary com leitura por chave', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { "a": 1, "b": 2 }',
+            'escreva(mapa["b"])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.Dictionary`2<string, int32>');
+        expect(resultado).toContain('newobj instance void class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::.ctor()');
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::Add(string, int32)');
+        expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::get_Item(string)');
+    });
+
+    it('Atribuição por chave em dicionário atualiza valor', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var mapa = { "a": 1, "b": 2 }',
+            'mapa["b"] = 9',
+            'escreva(mapa["b"])',
+        ]);
+
+        expect(resultado).toContain('callvirt instance void class [mscorlib]System.Collections.Generic.Dictionary`2<string, int32>::set_Item(string, int32)');
+        expect(resultado).toContain('ldstr "b"');
+        expect(resultado).toContain('ldc.i4 9');
+    });
+
+    it('Atribuição de tipo incompatível em dicionário falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar(['var mapa = { "a": 1 }', 'mapa["a"] = "texto"'])
         ).rejects.toThrow(ErroCompilador);
     });
 

@@ -1,0 +1,6 @@
+funcao fib(n: inteiro): inteiro { se (n <= 1) { retorna n } retorna fib(n - 1) + fib(n - 2) }
+var numeros = [1, 2.5, 3]
+var mapa = { "fib3": 0 }
+mapa["fib3"] = fib(3)
+escreva(numeros[1])
+escreva(mapa["fib3"])
