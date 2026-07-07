@@ -560,6 +560,75 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Construtor com aridade inválida falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Pessoa {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '}',
+                'var p = Pessoa()',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Construtor com tipo de argumento inválido falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Pessoa {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '}',
+                'var p = Pessoa(1)',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Método de instância com aridade inválida falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Pessoa {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '  falarCom(sufixo: texto): texto { retorna sufixo }',
+                '}',
+                'var p = Pessoa("Ada")',
+                'escreva(p.falarCom())',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Método de instância com tipo de argumento inválido falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Pessoa {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '  falarCom(sufixo: texto): texto { retorna sufixo }',
+                '}',
+                'var p = Pessoa("Ada")',
+                'escreva(p.falarCom(1))',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Reatribuição de campo com tipo incompatível falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Pessoa {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '  quebrar(): vazio { isto.nome = 1 }',
+                '}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Nao lógico inverte condição booleana', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar(['se (nao falso) { escreva(7) }']);

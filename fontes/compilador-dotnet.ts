@@ -629,11 +629,43 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             throw new ErroCompilador(`Classe '${nome}' já declarada.`);
         }
 
+        if (declaracao.superClasses?.length) {
+            throw new ErroCompilador(`Herança ainda não é suportada para a classe '${nome}'.`);
+        }
+
+        if (declaracao.implementa?.length) {
+            throw new ErroCompilador(`Interfaces ainda não são suportadas para a classe '${nome}'.`);
+        }
+
+        if (declaracao.mesclas?.length) {
+            throw new ErroCompilador(`Mesclas ainda não são suportadas para a classe '${nome}'.`);
+        }
+
+        if (declaracao.abstrata) {
+            throw new ErroCompilador(`Classes abstratas ainda não são suportadas ('${nome}').`);
+        }
+
+        if (declaracao.classeEstatica) {
+            throw new ErroCompilador(`Classes estáticas ainda não são suportadas ('${nome}').`);
+        }
+
+        if (declaracao.propriedades?.length) {
+            throw new ErroCompilador(`Declaração de propriedades ainda não é suportada na classe '${nome}'.`);
+        }
+
         const metodos = new Map<string, MetodoClasseCompilado>();
         for (const metodo of declaracao.metodos) {
             const nomeMetodoOriginal = metodo.simbolo.lexema;
             if (metodos.has(nomeMetodoOriginal)) {
                 throw new ErroCompilador(`Método '${nomeMetodoOriginal}' duplicado na classe '${nome}'.`);
+            }
+
+            if (metodo.estatico) {
+                throw new ErroCompilador(`Métodos estáticos ainda não são suportados ('${nome}.${nomeMetodoOriginal}').`);
+            }
+
+            if (metodo.abstrato) {
+                throw new ErroCompilador(`Métodos abstratos ainda não são suportados ('${nome}.${nomeMetodoOriginal}').`);
             }
 
             const parametros = metodo.funcao.parametros.map((parametro: any) => {
