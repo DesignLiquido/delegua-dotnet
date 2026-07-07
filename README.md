@@ -8,16 +8,21 @@ Segue a mesma arquitetura de [`delegua-llvm`](https://github.com/DesignLiquido/d
 
 Diferente de `delegua-llvm` (que usa bindings nativos do LLVM), este back-end usa **emissão textual**, no mesmo espírito dos `Tradutor*` de assembly (`tradutor-assembly-x64.ts`, `tradutor-webassembly.ts`) já existentes no repositório principal `delegua`.
 
-## Estado atual (primeira fatia vertical)
+## Estado atual
 
 Suporta apenas:
 
 - `var` com literais (`inteiro`, `numero`, `texto`, `logico`);
 - leitura de variáveis já declaradas;
 - aritmética (`+ - * /`) entre `inteiro`/`numero`, com promoção para `float64` quando misturados (divisão sempre produz `numero`, mesmo entre inteiros);
+- comparações (`< <= > >= == !=`) entre valores primitivos suportados;
+- atribuição local (`x = ...`);
+- `se`/`senao`;
+- `enquanto`;
+- operadores lógicos `e`, `ou` e `nao` no subconjunto booleano;
 - `escreva(...)` com os tipos acima.
 
-Todo o restante da gramática (`se`/`enquanto`/`para`/`escolha`, funções, classes, vetores, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
+Todo o restante da gramática (`para`, `escolha`, funções, classes, vetores, `importar`, exceções, closures, FFI) ainda **não é suportado** e lança `ErroCompilador` — ver `fontes/visitante-base-nao-implementado.ts`.
 
 ## Mapeamento de tipos (nesta versão)
 
