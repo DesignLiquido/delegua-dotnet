@@ -473,6 +473,19 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(int32)');
     });
 
+    it('Tamanho de tupla funciona como método e propriedade', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = (1, 2, 3)',
+            'escreva(t.tamanho())',
+            'escreva(t.tamanho)',
+        ]);
+
+        expect(resultado.match(/ldlen/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(resultado.match(/conv\.i4/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(resultado.match(/WriteLine\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
     it('Atribuição por índice em tupla atualiza elemento', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
@@ -877,6 +890,22 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('.method public hidebysig specialname rtspecialname instance void .ctor(string nome) cil managed');
         expect(resultado).toContain('newobj instance void class Pessoa::.ctor(string)');
         expect(resultado).toContain('callvirt instance string class Pessoa::falar()');
+    });
+
+    it('Classe com propriedade declarada tipada compila campo e acesso', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Pessoa {',
+            '  nome: texto',
+            '  construtor(nome: texto) { isto.nome = nome }',
+            '}',
+            'var p = Pessoa("Ada")',
+            'escreva(p.nome)',
+        ]);
+
+        expect(resultado).toContain('.field public string nome');
+        expect(resultado).toContain('newobj instance void class Pessoa::.ctor(string)');
+        expect(resultado).toContain('ldfld string class Pessoa::nome');
     });
 
     it('Método de instância aceita parâmetros tipados', async () => {

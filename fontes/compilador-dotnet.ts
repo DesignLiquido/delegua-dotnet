@@ -363,6 +363,12 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return;
         }
 
+        if (this.tipoEhTupla(tipoColecao)) {
+            this.instrucoes.push('ldlen');
+            this.instrucoes.push('conv.i4');
+            return;
+        }
+
         if (this.tipoEhVetor(tipoColecao)) {
             this.instrucoes.push(
                 `callvirt instance int32 ${this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoColecao))}::get_Count()`
@@ -699,8 +705,27 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             throw new ErroCompilador(`Classes estáticas ainda não são suportadas ('${nome}').`);
         }
 
-        if (declaracao.propriedades?.length) {
-            throw new ErroCompilador(`Declaração de propriedades ainda não é suportada na classe '${nome}'.`);
+        const campos = new Map<string, CampoClasseCompilado>();
+        for (const propriedade of declaracao.propriedades || []) {
+            if (propriedade.estatico) {
+                throw new ErroCompilador(`Propriedades estáticas ainda não são suportadas ('${nome}.${propriedade.nome.lexema}').`);
+            }
+
+            const nomePropriedade = propriedade.nome.lexema;
+            if (campos.has(nomePropriedade)) {
+                throw new ErroCompilador(`Propriedade '${nomePropriedade}' duplicada na classe '${nome}'.`);
+            }
+
+            const tipoPropriedade = this.normalizarTipo(propriedade.tipo || 'qualquer');
+            if (tipoPropriedade === 'qualquer') {
+                throw new ErroCompilador(`Propriedade '${nome}.${nomePropriedade}' requer tipo explícito nesta fase do compilador.`);
+            }
+
+            campos.set(nomePropriedade, {
+                nome: nomePropriedade,
+                tipoDelegua: tipoPropriedade,
+                tipoCil: this.mapearTipoCil(tipoPropriedade),
+            });
         }
 
         const metodos = new Map<string, MetodoClasseCompilado>();
@@ -745,7 +770,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.classes.set(nome, {
             nome,
             metodos,
-            campos: new Map(),
+            campos,
         });
     }
 
@@ -936,6 +961,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
                         return 'texto()';
                     case 'tamanho':
+                        if (!this.tipoEhTexto(tipoObjeto) && !this.tipoEhVetor(tipoObjeto) && !this.tipoEhDicionario(tipoObjeto) && !this.tipoEhTupla(tipoObjeto)) {
+                            throw new ErroCompilador(`Método '${construto.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                        }
+
                         return 'inteiro';
                     case 'adicionar':
                         return tipoObjeto;
@@ -1013,6 +1042,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
                         return 'texto()';
                     case 'tamanho':
+                        if (!this.tipoEhTexto(tipoObjeto) && !this.tipoEhVetor(tipoObjeto) && !this.tipoEhDicionario(tipoObjeto) && !this.tipoEhTupla(tipoObjeto)) {
+                            throw new ErroCompilador(`Método '${construto.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                        }
+
                         return 'inteiro';
                     case 'chaves':
                         return this.mapearTipoColecaoChaves(tipoObjeto);
@@ -1082,7 +1115,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 return campo.tipoDelegua;
             }
 
-            if (construto.simbolo.lexema === 'tamanho' && (this.tipoEhTexto(tipoObjeto) || this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
+            if (
+                construto.simbolo.lexema === 'tamanho' &&
+                (this.tipoEhTexto(tipoObjeto) || this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto) || this.tipoEhTupla(tipoObjeto))
+            ) {
                 return 'inteiro';
             }
 
@@ -1794,7 +1830,6 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     await expressao.entidadeChamada.objeto.aceitar(this as any);
                     this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToUpper()');
                     return 'texto';
-                case 'maiusculo':
                 case 'minusculo':
                 case 'minúsculo':
                     if (!this.tipoEhTexto(tipoObjeto)) {
@@ -2566,7 +2601,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return campo.tipoDelegua;
         }
 
-        if (expressao.simbolo.lexema === 'tamanho' && (this.tipoEhTexto(tipoObjeto) || this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
+        if (
+            expressao.simbolo.lexema === 'tamanho' &&
+            (this.tipoEhTexto(tipoObjeto) || this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto) || this.tipoEhTupla(tipoObjeto))
+        ) {
             await expressao.objeto.aceitar(this as any);
             this.emitirCarregamentoTamanhoColecao(tipoObjeto);
             return 'inteiro';
