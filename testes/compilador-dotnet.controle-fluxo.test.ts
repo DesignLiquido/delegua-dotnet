@@ -629,6 +629,43 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Texto contem/iniciaCom/terminaCom compilam para bool', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "Delegua"',
+            'escreva(t.contem("leg"))',
+            'escreva(t.iniciaCom("De"))',
+            'escreva(t.terminaCom("gua"))',
+        ]);
+
+        expect(resultado).toContain('callvirt instance bool [mscorlib]System.String::Contains(string)');
+        expect(resultado).toContain('callvirt instance bool [mscorlib]System.String::StartsWith(string)');
+        expect(resultado).toContain('callvirt instance bool [mscorlib]System.String::EndsWith(string)');
+        expect(resultado.match(/WriteLine\(bool\)/g)?.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('Texto aparar compila para String.Trim', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "  Delegua  "',
+            'escreva(t.aparar())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::Trim()');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(string)');
+    });
+
+    it('Texto contem com argumento não-texto falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var t = "Delegua"',
+                'escreva(t.contem(1))',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Classe com construtor e método de instância compila', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
