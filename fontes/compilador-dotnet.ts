@@ -356,6 +356,11 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
     }
 
     private emitirCarregamentoTamanhoColecao(tipoColecao: string): void {
+        if (this.tipoEhTexto(tipoColecao)) {
+            this.instrucoes.push('callvirt instance int32 [mscorlib]System.String::get_Length()');
+            return;
+        }
+
         if (this.tipoEhVetor(tipoColecao)) {
             this.instrucoes.push(
                 `callvirt instance int32 ${this.mapearTipoVetorCil(this.obterTipoElementoVetor(tipoColecao))}::get_Count()`
@@ -1000,7 +1005,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 return campo.tipoDelegua;
             }
 
-            if (construto.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
+            if (construto.simbolo.lexema === 'tamanho' && (this.tipoEhTexto(tipoObjeto) || this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
                 return 'inteiro';
             }
 
@@ -1964,7 +1969,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return campo.tipoDelegua;
         }
 
-        if (expressao.simbolo.lexema === 'tamanho' && (this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
+        if (expressao.simbolo.lexema === 'tamanho' && (this.tipoEhTexto(tipoObjeto) || this.tipoEhVetor(tipoObjeto) || this.tipoEhDicionario(tipoObjeto))) {
             await expressao.objeto.aceitar(this as any);
             this.emitirCarregamentoTamanhoColecao(tipoObjeto);
             return 'inteiro';

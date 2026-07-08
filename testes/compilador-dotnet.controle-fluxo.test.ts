@@ -629,6 +629,18 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Tamanho de texto funciona como método e propriedade', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "abc"',
+            'escreva(t.tamanho())',
+            'escreva(t.tamanho)',
+        ]);
+
+        expect(resultado.match(/System\.String::get_Length\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(resultado.match(/WriteLine\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
     it('Texto contem/iniciaCom/terminaCom compilam para bool', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
