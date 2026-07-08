@@ -1006,12 +1006,44 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
-    it('Herança (herda) ainda não é suportada', async () => {
+    it('Classe sem construtor explícito gera construtor padrão', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Vazia {}',
+            'var v = Vazia()',
+        ]);
+
+        expect(resultado).toContain('.method public hidebysig specialname rtspecialname instance void .ctor() cil managed');
+        expect(resultado).toContain('call instance void [mscorlib]System.Object::.ctor()');
+        expect(resultado).toContain('newobj instance void class Vazia::.ctor()');
+    });
+
+    it('Herança simples permite chamar método da classe base', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Base {',
+            '  construtor() {}',
+            '  falar(): texto { retorna "ok" }',
+            '}',
+            'classe Derivada herda Base {}',
+            'var d = Derivada()',
+            'escreva(d.falar())',
+        ]);
+
+        expect(resultado).toContain('.class public auto ansi beforefieldinit Derivada');
+        expect(resultado).toContain('extends class Base');
+        expect(resultado).toContain('newobj instance void class Derivada::.ctor()');
+        expect(resultado).toContain('callvirt instance string class Base::falar()');
+    });
+
+    it('Herança com construtor da base com parâmetros falha nesta fase', async () => {
         const compilador = new CompiladorDotnet();
 
         await expect(
             compilador.compilar([
-                'classe Base {}',
+                'classe Base {',
+                '  construtor(nome: texto) { isto.nome = nome }',
+                '}',
                 'classe Derivada herda Base {}',
             ])
         ).rejects.toThrow(ErroCompilador);

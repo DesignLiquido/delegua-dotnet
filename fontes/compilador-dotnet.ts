@@ -65,6 +65,7 @@ interface MetodoClasseCompilado {
     tipoRetornoCil: string;
     parametros: ParametroCompilado[];
     eConstrutor: boolean;
+    sintetico?: boolean;
 }
 
 interface CampoClasseCompilado {
@@ -75,6 +76,7 @@ interface CampoClasseCompilado {
 
 interface ClasseCompilada {
     nome: string;
+    superClasseNome: string | null;
     metodos: Map<string, MetodoClasseCompilado>;
     campos: Map<string, CampoClasseCompilado>;
 }
@@ -685,8 +687,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             throw new ErroCompilador(`Classe '${nome}' já declarada.`);
         }
 
-        if (declaracao.superClasses?.length) {
-            throw new ErroCompilador(`Herança ainda não é suportada para a classe '${nome}'.`);
+        if ((declaracao.superClasses?.length || 0) > 1) {
+            throw new ErroCompilador(`Herança múltipla ainda não é suportada para a classe '${nome}'.`);
         }
 
         if (declaracao.implementa?.length) {
@@ -767,8 +769,26 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             });
         }
 
+        if (!metodos.has('construtor')) {
+            metodos.set('construtor', {
+                nome: 'construtor',
+                nomeCil: '.ctor',
+                tipoRetornoDelegua: 'vazio',
+                tipoRetornoCil: this.mapearTipoCil('vazio'),
+                parametros: [],
+                eConstrutor: true,
+                sintetico: true,
+            });
+        }
+
+        const superClasseNome = declaracao.superClasses?.[0]?.simbolo?.lexema || declaracao.superClasses?.[0]?.lexema || null;
+        if (superClasseNome === nome) {
+            throw new ErroCompilador(`Classe '${nome}' não pode herdar de si mesma.`);
+        }
+
         this.classes.set(nome, {
             nome,
+            superClasseNome,
             metodos,
             campos,
         });
@@ -785,6 +805,48 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             classeAtual: this.classeAtual,
             metodoClasseAtual: this.metodoClasseAtual,
         };
+    }
+
+    private localizarMetodoClasse(nomeClasse: string, nomeMetodo: string): { classeDona: ClasseCompilada; metodo: MetodoClasseCompilado } | null {
+        const visitados = new Set<string>();
+        let classeAtual = this.classes.get(nomeClasse);
+
+        while (classeAtual) {
+            if (visitados.has(classeAtual.nome)) {
+                throw new ErroCompilador(`Ciclo de herança detectado na classe '${nomeClasse}'.`);
+            }
+
+            visitados.add(classeAtual.nome);
+            const metodo = classeAtual.metodos.get(nomeMetodo);
+            if (metodo) {
+                return { classeDona: classeAtual, metodo };
+            }
+
+            classeAtual = classeAtual.superClasseNome ? this.classes.get(classeAtual.superClasseNome) : undefined;
+        }
+
+        return null;
+    }
+
+    private localizarCampoClasse(nomeClasse: string, nomeCampo: string): { classeDona: ClasseCompilada; campo: CampoClasseCompilado } | null {
+        const visitados = new Set<string>();
+        let classeAtual = this.classes.get(nomeClasse);
+
+        while (classeAtual) {
+            if (visitados.has(classeAtual.nome)) {
+                throw new ErroCompilador(`Ciclo de herança detectado na classe '${nomeClasse}'.`);
+            }
+
+            visitados.add(classeAtual.nome);
+            const campo = classeAtual.campos.get(nomeCampo);
+            if (campo) {
+                return { classeDona: classeAtual, campo };
+            }
+
+            classeAtual = classeAtual.superClasseNome ? this.classes.get(classeAtual.superClasseNome) : undefined;
+        }
+
+        return null;
     }
 
     private restaurarEstadoCompilacao(estado: EstadoCompilacao): void {
@@ -982,7 +1044,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
                 const classe = this.classes.get(tipoObjeto);
                 if (classe) {
-                    const metodoClasse = classe.metodos.get(construto.entidadeChamada.simbolo.lexema);
+                    const localizacaoMetodo = this.localizarMetodoClasse(classe.nome, construto.entidadeChamada.simbolo.lexema);
+                    const metodoClasse = localizacaoMetodo?.metodo;
                     if (!metodoClasse || metodoClasse.eConstrutor) {
                         throw new ErroCompilador(`Método '${construto.entidadeChamada.simbolo.lexema}' não existe na classe '${tipoObjeto}'.`);
                     }
@@ -1107,12 +1170,12 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             const classe = this.classes.get(tipoObjeto);
             if (classe) {
-                const campo = classe.campos.get(construto.simbolo.lexema);
-                if (!campo) {
+                const localizacaoCampo = this.localizarCampoClasse(classe.nome, construto.simbolo.lexema);
+                if (!localizacaoCampo) {
                     throw new ErroCompilador(`Propriedade '${construto.simbolo.lexema}' não definida na classe '${classe.nome}'.`);
                 }
 
-                return campo.tipoDelegua;
+                return localizacaoCampo.campo.tipoDelegua;
             }
 
             if (
@@ -1141,7 +1204,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             const tipoValor = this.resolverTipoConstruto(construto.valor);
             const nomeCampo = construto.nome.lexema;
-            const campoExistente = classe.campos.get(nomeCampo);
+            const campoExistente = this.localizarCampoClasse(classe.nome, nomeCampo)?.campo;
             if (campoExistente) {
                 const compativel =
                     tipoValor === campoExistente.tipoDelegua ||
@@ -2029,7 +2092,8 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             const tipoObjeto = this.resolverTipoConstruto(expressao.entidadeChamada.objeto);
             const classe = this.classes.get(tipoObjeto);
             if (classe) {
-                const metodoClasse = classe.metodos.get(expressao.entidadeChamada.simbolo.lexema);
+                const localizacaoMetodo = this.localizarMetodoClasse(classe.nome, expressao.entidadeChamada.simbolo.lexema);
+                const metodoClasse = localizacaoMetodo?.metodo;
                 if (!metodoClasse || metodoClasse.eConstrutor) {
                     throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não existe na classe '${classe.nome}'.`);
                 }
@@ -2061,7 +2125,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 }
 
                 this.instrucoes.push(
-                    `callvirt instance ${metodoClasse.tipoRetornoCil} class ${classe.nome}::${metodoClasse.nomeCil}(${metodoClasse.parametros
+                    `callvirt instance ${metodoClasse.tipoRetornoCil} class ${localizacaoMetodo?.classeDona.nome || classe.nome}::${metodoClasse.nomeCil}(${metodoClasse.parametros
                         .map((parametro) => parametro.tipoCil)
                         .join(', ')})`
                 );
@@ -2591,14 +2655,16 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         const tipoObjeto = this.resolverTipoConstruto(expressao.objeto);
         const classe = this.classes.get(tipoObjeto);
         if (classe) {
-            const campo = classe.campos.get(expressao.simbolo.lexema);
-            if (!campo) {
+            const localizacaoCampo = this.localizarCampoClasse(classe.nome, expressao.simbolo.lexema);
+            if (!localizacaoCampo) {
                 throw new ErroCompilador(`Propriedade '${expressao.simbolo.lexema}' não definida na classe '${classe.nome}'.`);
             }
 
             await expressao.objeto.aceitar(this as any);
-            this.instrucoes.push(`ldfld ${campo.tipoCil} class ${classe.nome}::${campo.nome}`);
-            return campo.tipoDelegua;
+            this.instrucoes.push(
+                `ldfld ${localizacaoCampo.campo.tipoCil} class ${localizacaoCampo.classeDona.nome}::${localizacaoCampo.campo.nome}`
+            );
+            return localizacaoCampo.campo.tipoDelegua;
         }
 
         if (
@@ -2652,7 +2718,9 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         const nomeCampo = expressao.nome.lexema;
-        let campo = classe.campos.get(nomeCampo);
+        const localizacaoCampo = this.localizarCampoClasse(classe.nome, nomeCampo);
+        let campo = localizacaoCampo?.campo;
+        const classeDonaCampo = localizacaoCampo?.classeDona || classe;
         const tipoValor = this.resolverTipoConstruto(expressao.valor);
 
         if (!campo) {
@@ -2675,7 +2743,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         await expressao.objeto.aceitar(this as any);
         await this.emitirConstrutoParaTipoEsperado(expressao.valor, campo.tipoDelegua);
-        this.instrucoes.push(`stfld ${campo.tipoCil} class ${classe.nome}::${nomeCampo}`);
+        this.instrucoes.push(`stfld ${campo.tipoCil} class ${classeDonaCampo.nome}::${nomeCampo}`);
     }
 
     async visitarExpressaoBloco(declaracao: Bloco): Promise<any> {
@@ -2785,7 +2853,22 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             if (metodoClasse.eConstrutor) {
                 this.instrucoes.push('ldarg 0');
-                this.instrucoes.push('call instance void [mscorlib]System.Object::.ctor()');
+                if (this.classeAtual.superClasseNome) {
+                    const construtorBase = this.classes.get(this.classeAtual.superClasseNome)?.metodos.get('construtor');
+                    if (!construtorBase) {
+                        throw new ErroCompilador(`Classe base '${this.classeAtual.superClasseNome}' não possui construtor acessível.`);
+                    }
+
+                    if (construtorBase.parametros.length !== 0) {
+                        throw new ErroCompilador(
+                            `Construtor da classe base '${this.classeAtual.superClasseNome}' deve ser sem parâmetros para herança nesta fase do compilador.`
+                        );
+                    }
+
+                    this.instrucoes.push(`call instance void class ${this.classeAtual.superClasseNome}::.ctor()`);
+                } else {
+                    this.instrucoes.push('call instance void [mscorlib]System.Object::.ctor()');
+                }
             }
 
             for (const item of declaracaoMetodo.funcao.corpo) {
@@ -2832,6 +2915,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             throw new ErroCompilador(`Classe '${declaracao.simbolo.lexema}' não registrada.`);
         }
 
+        if (classe.superClasseNome && !this.classes.has(classe.superClasseNome)) {
+            throw new ErroCompilador(`Classe base '${classe.superClasseNome}' não declarada para '${classe.nome}'.`);
+        }
+
         const estadoAnterior = this.capturarEstadoCompilacao();
         this.classeAtual = classe;
         this.funcaoAtual = null;
@@ -2844,6 +2931,36 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             });
 
             const metodosCompilados: string[] = [];
+            const possuiConstrutorDeclarado = declaracao.metodos.some((metodo) => metodo.simbolo.lexema === 'construtor');
+            if (!possuiConstrutorDeclarado) {
+                if (classe.superClasseNome) {
+                    const construtorBase = this.classes.get(classe.superClasseNome)?.metodos.get('construtor');
+                    if (!construtorBase) {
+                        throw new ErroCompilador(`Classe base '${classe.superClasseNome}' não possui construtor acessível.`);
+                    }
+
+                    if (construtorBase.parametros.length !== 0) {
+                        throw new ErroCompilador(
+                            `Construtor da classe base '${classe.superClasseNome}' deve ser sem parâmetros para herança nesta fase do compilador.`
+                        );
+                    }
+                }
+
+                const chamadaBase = classe.superClasseNome
+                    ? `call instance void class ${classe.superClasseNome}::.ctor()`
+                    : 'call instance void [mscorlib]System.Object::.ctor()';
+
+                metodosCompilados.push(
+                    `.method public hidebysig specialname rtspecialname instance void .ctor() cil managed\n` +
+                        `  {\n` +
+                        `    .maxstack 8\n` +
+                        `    ldarg 0\n` +
+                        `    ${chamadaBase}\n` +
+                        `    ret\n` +
+                        `  }`
+                );
+            }
+
             for (const metodo of metodosOrdenados) {
                 metodosCompilados.push(await this.compilarMetodoClasse(metodo));
             }
@@ -2854,7 +2971,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             this.classesCompiladas.push(
                 `.class public auto ansi beforefieldinit ${classe.nome}\n` +
-                    `       extends [mscorlib]System.Object\n` +
+                    `       extends ${classe.superClasseNome ? `class ${classe.superClasseNome}` : '[mscorlib]System.Object'}\n` +
                     `{\n` +
                     (campos ? `${campos}\n\n` : '') +
                     `${metodosCompilados.join('\n\n')}\n` +
