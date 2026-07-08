@@ -766,6 +766,40 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Tente com falhar e pegue compila para try/catch', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'tente { falhar("erro") } pegue { escreva("recuperado") }',
+        ]);
+
+        expect(resultado).toContain('.try');
+        expect(resultado).toContain('newobj instance void [mscorlib]System.Exception::.ctor(string)');
+        expect(resultado).toContain('throw');
+        expect(resultado).toContain('catch [mscorlib]System.Exception');
+        expect(resultado).toContain('ldstr "recuperado"');
+    });
+
+    it('Tente com finalmente compila para bloco finally', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'tente { falhar("erro") } pegue { escreva("recuperado") } finalmente { escreva("fim") }',
+        ]);
+
+        expect(resultado).toContain('finally');
+        expect(resultado).toContain('endfinally');
+        expect(resultado).toContain('ldstr "fim"');
+    });
+
+    it('Falhar com explicação não-texto falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'falhar(1)',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Classe com construtor e método de instância compila', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([

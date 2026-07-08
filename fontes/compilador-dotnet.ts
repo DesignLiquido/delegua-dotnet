@@ -17,6 +17,7 @@ import {
     Escolha,
     Escreva,
     Expressao,
+    Falhar,
     FormatacaoEscrita,
     FuncaoDeclaracao,
     Isto,
@@ -2480,6 +2481,52 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         this.emitirRotulo(rotuloFim);
     }
 
+    async visitarDeclaracaoTente(declaracao: any): Promise<any> {
+        if (declaracao.caminhoSenao) {
+            throw new ErroCompilador("Bloco 'senão' em 'tente' ainda não é suportado neste compilador.");
+        }
+
+        if ((!declaracao.caminhoPegue || declaracao.caminhoPegue.length === 0) && !declaracao.caminhoFinalmente) {
+            throw new ErroCompilador("'tente' requer ao menos um bloco 'pegue' ou 'finalmente'.");
+        }
+
+        const rotuloFim = this.gerarRotulo();
+        this.instrucoes.push('.try');
+        this.instrucoes.push('{');
+        for (const item of declaracao.caminhoTente || []) {
+            await item.aceitar(this as any);
+        }
+        this.instrucoes.push(`leave ${rotuloFim}`);
+        this.instrucoes.push('}');
+
+        for (const blocoPegue of declaracao.caminhoPegue || []) {
+            if (blocoPegue.parametro || blocoPegue.tipoExcecao) {
+                throw new ErroCompilador("Blocos 'pegue' tipados ou com parâmetro ainda não são suportados neste compilador.");
+            }
+
+            this.instrucoes.push('catch [mscorlib]System.Exception');
+            this.instrucoes.push('{');
+            this.instrucoes.push('pop');
+            for (const item of blocoPegue.corpo || []) {
+                await item.aceitar(this as any);
+            }
+            this.instrucoes.push(`leave ${rotuloFim}`);
+            this.instrucoes.push('}');
+        }
+
+        if (declaracao.caminhoFinalmente) {
+            this.instrucoes.push('finally');
+            this.instrucoes.push('{');
+            for (const item of declaracao.caminhoFinalmente) {
+                await item.aceitar(this as any);
+            }
+            this.instrucoes.push('endfinally');
+            this.instrucoes.push('}');
+        }
+
+        this.emitirRotulo(rotuloFim);
+    }
+
     async visitarDeclaracaoPara(declaracao: Para): Promise<any> {
         const inicializador = Array.isArray(declaracao.inicializador)
             ? declaracao.inicializador[0]
@@ -2567,6 +2614,22 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         this.instrucoes.push('ret');
+    }
+
+    async visitarExpressaoFalhar(expressao: Falhar | any): Promise<any> {
+        if (!expressao.explicacao) {
+            throw new ErroCompilador("'falhar' requer uma explicação de texto nesta fase do compilador.");
+        }
+
+        const explicacao = expressao.explicacao.expressao || expressao.explicacao;
+        const tipoExplicacao = this.resolverTipoConstruto(explicacao);
+        if (tipoExplicacao !== 'texto') {
+            throw new ErroCompilador("'falhar' requer explicação do tipo texto nesta fase do compilador.");
+        }
+
+        await explicacao.aceitar(this as any);
+        this.instrucoes.push('newobj instance void [mscorlib]System.Exception::.ctor(string)');
+        this.instrucoes.push('throw');
     }
 
     async visitarExpressaoFormatacaoEscrita(expressao: FormatacaoEscrita): Promise<string> {
