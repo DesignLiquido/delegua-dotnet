@@ -733,6 +733,67 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('callvirt instance string [mscorlib]System.String::TrimEnd()');
     });
 
+    it('Texto concatenar compila para String.Concat em cadeia', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "ab"',
+            'escreva(t.concatenar("cd", "ef"))',
+        ]);
+
+        expect(resultado.match(/System\.String::Concat\(string, string\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Texto fatiar e subtexto compilam para Substring', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "abcdef"',
+            'escreva(t.fatiar(1, 4))',
+            'escreva(t.subtexto(2, 5))',
+        ]);
+
+        expect(resultado.match(/System\.String::Substring\(int32, int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Texto inverter compila para reverse de char array e novo string', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "abc"',
+            'escreva(t.inverter())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance char[] [mscorlib]System.String::ToCharArray()');
+        expect(resultado).toContain('call void [mscorlib]System.Array::Reverse(class [mscorlib]System.Array)');
+        expect(resultado).toContain('newobj instance void [mscorlib]System.String::.ctor(char[])');
+    });
+
+    it('Texto tudoMaiusculo e tudoMinusculo compilam para comparação com ToUpper/ToLower', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var a = "ABC"',
+            'var b = "abc"',
+            'escreva(a.tudoMaiusculo())',
+            'escreva(b.tudoMinusculo())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::ToUpper()');
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::ToLower()');
+        expect(resultado).toContain('call bool [mscorlib]System.String::op_Equality(string, string)');
+    });
+
+    it('Texto particao e partição retornam três partes indexáveis', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "a,b,c"',
+            'escreva(t.particao(",")[1])',
+            'escreva(t.partição(",")[2])',
+        ]);
+
+        expect(resultado).toContain('newarr string');
+        expect(resultado).toContain('System.String::IndexOf(string)');
+        expect(resultado.match(/stelem\.ref/g)?.length).toBeGreaterThanOrEqual(6);
+        expect(resultado.match(/ldelem\.ref/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
     it('Texto encontrar com índice não inteiro falha na compilação', async () => {
         const compilador = new CompiladorDotnet();
 

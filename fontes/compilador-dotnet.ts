@@ -886,13 +886,26 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 const tipoObjeto = this.resolverTipoConstruto(construto.entidadeChamada.objeto);
                 switch (construto.entidadeChamada.nomeMetodo) {
                     case 'maiusculo':
+                    case 'maiúsculo':
                     case 'minusculo':
+                    case 'minúsculo':
                     case 'substituir':
                     case 'aparar':
                     case 'apararInicio':
                     case 'apararFim':
+                    case 'apararInício':
+                    case 'concatenar':
+                    case 'fatiar':
+                    case 'subtexto':
+                    case 'inverter':
+                    case 'particao':
+                    case 'partição':
                         if (!this.tipoEhTexto(tipoObjeto)) {
                             throw new ErroCompilador(`Método '${construto.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                        }
+
+                        if (construto.entidadeChamada.nomeMetodo === 'particao' || construto.entidadeChamada.nomeMetodo === 'partição') {
+                            return 'texto()';
                         }
 
                         return 'texto';
@@ -900,6 +913,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     case 'inclui':
                     case 'iniciaCom':
                     case 'terminaCom':
+                    case 'tudoMaiusculo':
+                    case 'tudoMaiúsculo':
+                    case 'tudoMinusculo':
+                    case 'tudoMinúsculo':
                         if (!this.tipoEhTexto(tipoObjeto)) {
                             throw new ErroCompilador(`Método '${construto.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
                         }
@@ -946,13 +963,26 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
                 switch (construto.entidadeChamada.simbolo.lexema) {
                     case 'maiusculo':
+                    case 'maiúsculo':
                     case 'minusculo':
+                    case 'minúsculo':
                     case 'substituir':
                     case 'aparar':
                     case 'apararInicio':
                     case 'apararFim':
+                    case 'apararInício':
+                    case 'concatenar':
+                    case 'fatiar':
+                    case 'subtexto':
+                    case 'inverter':
+                    case 'particao':
+                    case 'partição':
                         if (!this.tipoEhTexto(tipoObjeto)) {
                             throw new ErroCompilador(`Método '${construto.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                        }
+
+                        if (construto.entidadeChamada.simbolo.lexema === 'particao' || construto.entidadeChamada.simbolo.lexema === 'partição') {
+                            return 'texto()';
                         }
 
                         return 'texto';
@@ -960,6 +990,10 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     case 'inclui':
                     case 'iniciaCom':
                     case 'terminaCom':
+                    case 'tudoMaiusculo':
+                    case 'tudoMaiúsculo':
+                    case 'tudoMinusculo':
+                    case 'tudoMinúsculo':
                         if (!this.tipoEhTexto(tipoObjeto)) {
                             throw new ErroCompilador(`Método '${construto.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
                         }
@@ -1538,6 +1572,91 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         if (expressao.entidadeChamada instanceof AcessoMetodo) {
             const tipoObjeto = this.resolverTipoConstruto(expressao.entidadeChamada.objeto);
             switch (expressao.entidadeChamada.nomeMetodo) {
+                case 'concatenar':
+                    if (!this.tipoEhTexto(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+                    if (expressao.argumentos.length < 1) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' espera ao menos 1 argumento.`);
+                    }
+                    if (expressao.argumentos.some((argumento: any) => this.resolverTipoConstruto(argumento) !== 'texto')) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' requer argumentos de texto.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    for (const argumento of expressao.argumentos) {
+                        await this.emitirConstrutoParaTipoEsperado(argumento, 'texto');
+                        this.instrucoes.push('call string [mscorlib]System.String::Concat(string, string)');
+                    }
+                    return 'texto';
+                case 'fatiar':
+                    if (!this.tipoEhTexto(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+                    if (expressao.argumentos.length < 1 || expressao.argumentos.length > 2) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' espera 1 ou 2 argumentos.`);
+                    }
+                    if (!this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[0])) || this.resolverTipoConstruto(expressao.argumentos[0]) === 'numero') {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' requer índice inicial inteiro.`);
+                    }
+                    if (expressao.argumentos[1] && (!this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[1])) || this.resolverTipoConstruto(expressao.argumentos[1]) === 'numero')) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' requer índice final inteiro.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    await expressao.argumentos[0].aceitar(this as any);
+                    if (expressao.argumentos[1]) {
+                        const localInicio = this.reservarLocalTemporario('inteiro');
+                        this.instrucoes.push('dup');
+                        this.emitirArmazenamentoVariavel(localInicio);
+                        await expressao.argumentos[1].aceitar(this as any);
+                        this.emitirCarregamentoVariavel(localInicio);
+                        this.instrucoes.push('sub');
+                        this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32, int32)');
+                    } else {
+                        this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32)');
+                    }
+                    return 'texto';
+                case 'subtexto':
+                    if (!this.tipoEhTexto(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+                    if (expressao.argumentos.length !== 2) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' espera 2 argumentos.`);
+                    }
+                    if (
+                        !this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[0])) ||
+                        this.resolverTipoConstruto(expressao.argumentos[0]) === 'numero' ||
+                        !this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[1])) ||
+                        this.resolverTipoConstruto(expressao.argumentos[1]) === 'numero'
+                    ) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' requer índices inteiros.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    await expressao.argumentos[0].aceitar(this as any);
+                    const localInicioSubtexto = this.reservarLocalTemporario('inteiro');
+                    this.instrucoes.push('dup');
+                    this.emitirArmazenamentoVariavel(localInicioSubtexto);
+                    await expressao.argumentos[1].aceitar(this as any);
+                    this.emitirCarregamentoVariavel(localInicioSubtexto);
+                    this.instrucoes.push('sub');
+                    this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32, int32)');
+                    return 'texto';
+                case 'inverter':
+                    if (!this.tipoEhTexto(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+                    if (expressao.argumentos.length !== 0) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não aceita argumentos nesta fase do compilador.`);
+                    }
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    this.instrucoes.push('callvirt instance char[] [mscorlib]System.String::ToCharArray()');
+                    this.instrucoes.push('dup');
+                    this.instrucoes.push('call void [mscorlib]System.Array::Reverse(class [mscorlib]System.Array)');
+                    this.instrucoes.push('newobj instance void [mscorlib]System.String::.ctor(char[])');
+                    return 'texto';
                 case 'aparar':
                     if (!this.tipoEhTexto(tipoObjeto)) {
                         throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
@@ -1573,19 +1692,39 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     return 'texto';
                 case 'contem':
                 case 'inclui':
+                case 'tudoMaiusculo':
+                case 'tudoMaiúsculo':
+                case 'tudoMinusculo':
+                case 'tudoMinúsculo':
                     if (!this.tipoEhTexto(tipoObjeto)) {
                         throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
                     }
-                    if (expressao.argumentos.length !== 1) {
+                    if (
+                        (expressao.entidadeChamada.nomeMetodo === 'contem' || expressao.entidadeChamada.nomeMetodo === 'inclui') &&
+                        expressao.argumentos.length !== 1
+                    ) {
                         throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' espera 1 argumento.`);
                     }
-                    if (this.resolverTipoConstruto(expressao.argumentos[0]) !== 'texto') {
+                    if (
+                        (expressao.entidadeChamada.nomeMetodo === 'contem' || expressao.entidadeChamada.nomeMetodo === 'inclui') &&
+                        this.resolverTipoConstruto(expressao.argumentos[0]) !== 'texto'
+                    ) {
                         throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' requer argumento de texto.`);
                     }
 
                     await expressao.entidadeChamada.objeto.aceitar(this as any);
-                    await this.emitirConstrutoParaTipoEsperado(expressao.argumentos[0], 'texto');
-                    this.instrucoes.push('callvirt instance bool [mscorlib]System.String::Contains(string)');
+                    if (expressao.entidadeChamada.nomeMetodo === 'contem' || expressao.entidadeChamada.nomeMetodo === 'inclui') {
+                        await this.emitirConstrutoParaTipoEsperado(expressao.argumentos[0], 'texto');
+                        this.instrucoes.push('callvirt instance bool [mscorlib]System.String::Contains(string)');
+                    } else {
+                        this.instrucoes.push('dup');
+                        if (expressao.entidadeChamada.nomeMetodo === 'tudoMaiusculo' || expressao.entidadeChamada.nomeMetodo === 'tudoMaiúsculo') {
+                            this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToUpper()');
+                        } else {
+                            this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToLower()');
+                        }
+                        this.instrucoes.push('call bool [mscorlib]System.String::op_Equality(string, string)');
+                    }
                     return 'logico';
                 case 'encontrar':
                     if (!this.tipoEhTexto(tipoObjeto)) {
@@ -1644,6 +1783,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     this.instrucoes.push('callvirt instance bool [mscorlib]System.String::EndsWith(string)');
                     return 'logico';
                 case 'maiusculo':
+                case 'maiúsculo':
                     if (!this.tipoEhTexto(tipoObjeto)) {
                         throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
                     }
@@ -1654,7 +1794,9 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     await expressao.entidadeChamada.objeto.aceitar(this as any);
                     this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToUpper()');
                     return 'texto';
+                case 'maiusculo':
                 case 'minusculo':
+                case 'minúsculo':
                     if (!this.tipoEhTexto(tipoObjeto)) {
                         throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
                     }
@@ -1711,6 +1853,83 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     } else {
                         this.instrucoes.push('callvirt instance string[] [mscorlib]System.String::Split(char[])');
                     }
+                    return 'texto()';
+                case 'particao':
+                case 'partição':
+                    if (!this.tipoEhTexto(tipoObjeto)) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' não implementado para '${tipoObjeto}'.`);
+                    }
+                    if (expressao.argumentos.length !== 1) {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' espera 1 argumento.`);
+                    }
+                    if (this.resolverTipoConstruto(expressao.argumentos[0]) !== 'texto') {
+                        throw new ErroCompilador(`Método '${expressao.entidadeChamada.nomeMetodo}' requer argumento de texto.`);
+                    }
+
+                    const localTextoParticao = this.reservarLocalTemporario('texto');
+                    const localSeparadorParticao = this.reservarLocalTemporario('texto');
+                    const localIndiceParticao = this.reservarLocalTemporario('inteiro');
+                    const localResultadoParticao = this.reservarLocalTemporario('texto()');
+                    const rotuloSeparadorEncontrado = this.gerarRotulo();
+                    const rotuloFimParticao = this.gerarRotulo();
+
+                    await expressao.entidadeChamada.objeto.aceitar(this as any);
+                    this.emitirArmazenamentoVariavel(localTextoParticao);
+                    await this.emitirConstrutoParaTipoEsperado(expressao.argumentos[0], 'texto');
+                    this.emitirArmazenamentoVariavel(localSeparadorParticao);
+
+                    this.emitirCarregamentoVariavel(localTextoParticao);
+                    this.emitirCarregamentoVariavel(localSeparadorParticao);
+                    this.instrucoes.push('callvirt instance int32 [mscorlib]System.String::IndexOf(string)');
+                    this.emitirArmazenamentoVariavel(localIndiceParticao);
+
+                    this.instrucoes.push('ldc.i4.3');
+                    this.instrucoes.push('newarr string');
+                    this.emitirArmazenamentoVariavel(localResultadoParticao);
+
+                    this.emitirCarregamentoVariavel(localIndiceParticao);
+                    this.instrucoes.push('ldc.i4.m1');
+                    this.instrucoes.push('ceq');
+                    this.instrucoes.push(`brfalse ${rotuloSeparadorEncontrado}`);
+
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
+                    this.instrucoes.push('ldc.i4.0');
+                    this.emitirCarregamentoVariavel(localTextoParticao);
+                    this.instrucoes.push('stelem.ref');
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
+                    this.instrucoes.push('ldc.i4.1');
+                    this.instrucoes.push('ldstr ""');
+                    this.instrucoes.push('stelem.ref');
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
+                    this.instrucoes.push('ldc.i4.2');
+                    this.instrucoes.push('ldstr ""');
+                    this.instrucoes.push('stelem.ref');
+                    this.instrucoes.push(`br ${rotuloFimParticao}`);
+
+                    this.emitirRotulo(rotuloSeparadorEncontrado);
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
+                    this.instrucoes.push('ldc.i4.0');
+                    this.emitirCarregamentoVariavel(localTextoParticao);
+                    this.instrucoes.push('ldc.i4.0');
+                    this.emitirCarregamentoVariavel(localIndiceParticao);
+                    this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32, int32)');
+                    this.instrucoes.push('stelem.ref');
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
+                    this.instrucoes.push('ldc.i4.1');
+                    this.emitirCarregamentoVariavel(localSeparadorParticao);
+                    this.instrucoes.push('stelem.ref');
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
+                    this.instrucoes.push('ldc.i4.2');
+                    this.emitirCarregamentoVariavel(localTextoParticao);
+                    this.emitirCarregamentoVariavel(localIndiceParticao);
+                    this.emitirCarregamentoVariavel(localSeparadorParticao);
+                    this.instrucoes.push('callvirt instance int32 [mscorlib]System.String::get_Length()');
+                    this.instrucoes.push('add');
+                    this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32)');
+                    this.instrucoes.push('stelem.ref');
+
+                    this.emitirRotulo(rotuloFimParticao);
+                    this.emitirCarregamentoVariavel(localResultadoParticao);
                     return 'texto()';
                 case 'tamanho':
                     if (expressao.argumentos.length !== 0) {
@@ -1814,7 +2033,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 return metodoClasse.tipoRetornoDelegua;
             }
 
-            if (expressao.entidadeChamada.simbolo.lexema === 'maiusculo') {
+            if (expressao.entidadeChamada.simbolo.lexema === 'maiusculo' || expressao.entidadeChamada.simbolo.lexema === 'maiúsculo') {
                 if (!this.tipoEhTexto(tipoObjeto)) {
                     throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
                 }
@@ -1824,6 +2043,99 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
                 await expressao.entidadeChamada.objeto.aceitar(this as any);
                 this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToUpper()');
+                return 'texto';
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'concatenar') {
+                if (!this.tipoEhTexto(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+                if (expressao.argumentos.length < 1) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' espera ao menos 1 argumento.`);
+                }
+                if (expressao.argumentos.some((argumento: any) => this.resolverTipoConstruto(argumento) !== 'texto')) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' requer argumentos de texto.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                for (const argumento of expressao.argumentos) {
+                    await this.emitirConstrutoParaTipoEsperado(argumento, 'texto');
+                    this.instrucoes.push('call string [mscorlib]System.String::Concat(string, string)');
+                }
+                return 'texto';
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'fatiar') {
+                if (!this.tipoEhTexto(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+                if (expressao.argumentos.length < 1 || expressao.argumentos.length > 2) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' espera 1 ou 2 argumentos.`);
+                }
+                if (!this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[0])) || this.resolverTipoConstruto(expressao.argumentos[0]) === 'numero') {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' requer índice inicial inteiro.`);
+                }
+                if (expressao.argumentos[1] && (!this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[1])) || this.resolverTipoConstruto(expressao.argumentos[1]) === 'numero')) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' requer índice final inteiro.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                await expressao.argumentos[0].aceitar(this as any);
+                if (expressao.argumentos[1]) {
+                    const localInicio = this.reservarLocalTemporario('inteiro');
+                    this.instrucoes.push('dup');
+                    this.emitirArmazenamentoVariavel(localInicio);
+                    await expressao.argumentos[1].aceitar(this as any);
+                    this.emitirCarregamentoVariavel(localInicio);
+                    this.instrucoes.push('sub');
+                    this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32, int32)');
+                } else {
+                    this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32)');
+                }
+                return 'texto';
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'subtexto') {
+                if (!this.tipoEhTexto(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+                if (expressao.argumentos.length !== 2) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' espera 2 argumentos.`);
+                }
+                if (
+                    !this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[0])) ||
+                    this.resolverTipoConstruto(expressao.argumentos[0]) === 'numero' ||
+                    !this.tipoEhNumerico(this.resolverTipoConstruto(expressao.argumentos[1])) ||
+                    this.resolverTipoConstruto(expressao.argumentos[1]) === 'numero'
+                ) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' requer índices inteiros.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                await expressao.argumentos[0].aceitar(this as any);
+                const localInicioSubtexto = this.reservarLocalTemporario('inteiro');
+                this.instrucoes.push('dup');
+                this.emitirArmazenamentoVariavel(localInicioSubtexto);
+                await expressao.argumentos[1].aceitar(this as any);
+                this.emitirCarregamentoVariavel(localInicioSubtexto);
+                this.instrucoes.push('sub');
+                this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32, int32)');
+                return 'texto';
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'inverter') {
+                if (!this.tipoEhTexto(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+                if (expressao.argumentos.length !== 0) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não aceita argumentos nesta fase do compilador.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                this.instrucoes.push('callvirt instance char[] [mscorlib]System.String::ToCharArray()');
+                this.instrucoes.push('dup');
+                this.instrucoes.push('call void [mscorlib]System.Array::Reverse(class [mscorlib]System.Array)');
+                this.instrucoes.push('newobj instance void [mscorlib]System.String::.ctor(char[])');
                 return 'texto';
             }
 
@@ -1837,6 +2149,19 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
                 await expressao.entidadeChamada.objeto.aceitar(this as any);
                 this.instrucoes.push('callvirt instance string [mscorlib]System.String::Trim()');
+                return 'texto';
+            }
+
+            if (expressao.entidadeChamada.simbolo.lexema === 'apararInício') {
+                if (!this.tipoEhTexto(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+                if (expressao.argumentos.length !== 0) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não aceita argumentos nesta fase do compilador.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                this.instrucoes.push('callvirt instance string [mscorlib]System.String::TrimStart()');
                 return 'texto';
             }
 
@@ -1866,7 +2191,46 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 return 'texto';
             }
 
-            if (expressao.entidadeChamada.simbolo.lexema === 'contem' || expressao.entidadeChamada.simbolo.lexema === 'inclui') {
+            if (
+                expressao.entidadeChamada.simbolo.lexema === 'contem' ||
+                expressao.entidadeChamada.simbolo.lexema === 'inclui' ||
+                expressao.entidadeChamada.simbolo.lexema === 'tudoMaiusculo' ||
+                expressao.entidadeChamada.simbolo.lexema === 'tudoMaiúsculo' ||
+                expressao.entidadeChamada.simbolo.lexema === 'tudoMinusculo' ||
+                expressao.entidadeChamada.simbolo.lexema === 'tudoMinúsculo'
+            ) {
+                if (!this.tipoEhTexto(tipoObjeto)) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
+                }
+                if (
+                    (expressao.entidadeChamada.simbolo.lexema === 'contem' || expressao.entidadeChamada.simbolo.lexema === 'inclui') &&
+                    expressao.argumentos.length !== 1
+                ) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' espera 1 argumento.`);
+                }
+                if (
+                    (expressao.entidadeChamada.simbolo.lexema === 'contem' || expressao.entidadeChamada.simbolo.lexema === 'inclui') &&
+                    this.resolverTipoConstruto(expressao.argumentos[0]) !== 'texto'
+                ) {
+                    throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' requer argumento de texto.`);
+                }
+
+                await expressao.entidadeChamada.objeto.aceitar(this as any);
+                if (expressao.entidadeChamada.simbolo.lexema === 'contem' || expressao.entidadeChamada.simbolo.lexema === 'inclui') {
+                    await this.emitirConstrutoParaTipoEsperado(expressao.argumentos[0], 'texto');
+                    this.instrucoes.push('callvirt instance bool [mscorlib]System.String::Contains(string)');
+                } else {
+                    this.instrucoes.push('dup');
+                    if (expressao.entidadeChamada.simbolo.lexema === 'tudoMaiusculo' || expressao.entidadeChamada.simbolo.lexema === 'tudoMaiúsculo') {
+                        this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToUpper()');
+                    } else {
+                        this.instrucoes.push('callvirt instance string [mscorlib]System.String::ToLower()');
+                    }
+                    this.instrucoes.push('call bool [mscorlib]System.String::op_Equality(string, string)');
+                }
+                return 'logico';
+            }
+            if (expressao.entidadeChamada.simbolo.lexema === 'particao' || expressao.entidadeChamada.simbolo.lexema === 'partição') {
                 if (!this.tipoEhTexto(tipoObjeto)) {
                     throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' não implementado para '${tipoObjeto}'.`);
                 }
@@ -1877,11 +2241,73 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     throw new ErroCompilador(`Método '${expressao.entidadeChamada.simbolo.lexema}' requer argumento de texto.`);
                 }
 
+                const localTextoParticao = this.reservarLocalTemporario('texto');
+                const localSeparadorParticao = this.reservarLocalTemporario('texto');
+                const localIndiceParticao = this.reservarLocalTemporario('inteiro');
+                const localResultadoParticao = this.reservarLocalTemporario('texto()');
+                const rotuloSeparadorEncontrado = this.gerarRotulo();
+                const rotuloFimParticao = this.gerarRotulo();
+
                 await expressao.entidadeChamada.objeto.aceitar(this as any);
+                this.emitirArmazenamentoVariavel(localTextoParticao);
                 await this.emitirConstrutoParaTipoEsperado(expressao.argumentos[0], 'texto');
-                this.instrucoes.push('callvirt instance bool [mscorlib]System.String::Contains(string)');
-                return 'logico';
+                this.emitirArmazenamentoVariavel(localSeparadorParticao);
+
+                this.emitirCarregamentoVariavel(localTextoParticao);
+                this.emitirCarregamentoVariavel(localSeparadorParticao);
+                this.instrucoes.push('callvirt instance int32 [mscorlib]System.String::IndexOf(string)');
+                this.emitirArmazenamentoVariavel(localIndiceParticao);
+
+                this.instrucoes.push('ldc.i4.3');
+                this.instrucoes.push('newarr string');
+                this.emitirArmazenamentoVariavel(localResultadoParticao);
+
+                this.emitirCarregamentoVariavel(localIndiceParticao);
+                this.instrucoes.push('ldc.i4.m1');
+                this.instrucoes.push('ceq');
+                this.instrucoes.push(`brfalse ${rotuloSeparadorEncontrado}`);
+
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                this.instrucoes.push('ldc.i4.0');
+                this.emitirCarregamentoVariavel(localTextoParticao);
+                this.instrucoes.push('stelem.ref');
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                this.instrucoes.push('ldc.i4.1');
+                this.instrucoes.push('ldstr ""');
+                this.instrucoes.push('stelem.ref');
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                this.instrucoes.push('ldc.i4.2');
+                this.instrucoes.push('ldstr ""');
+                this.instrucoes.push('stelem.ref');
+                this.instrucoes.push(`br ${rotuloFimParticao}`);
+
+                this.emitirRotulo(rotuloSeparadorEncontrado);
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                this.instrucoes.push('ldc.i4.0');
+                this.emitirCarregamentoVariavel(localTextoParticao);
+                this.instrucoes.push('ldc.i4.0');
+                this.emitirCarregamentoVariavel(localIndiceParticao);
+                this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32, int32)');
+                this.instrucoes.push('stelem.ref');
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                this.instrucoes.push('ldc.i4.1');
+                this.emitirCarregamentoVariavel(localSeparadorParticao);
+                this.instrucoes.push('stelem.ref');
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                this.instrucoes.push('ldc.i4.2');
+                this.emitirCarregamentoVariavel(localTextoParticao);
+                this.emitirCarregamentoVariavel(localIndiceParticao);
+                this.emitirCarregamentoVariavel(localSeparadorParticao);
+                this.instrucoes.push('callvirt instance int32 [mscorlib]System.String::get_Length()');
+                this.instrucoes.push('add');
+                this.instrucoes.push('callvirt instance string [mscorlib]System.String::Substring(int32)');
+                this.instrucoes.push('stelem.ref');
+
+                this.emitirRotulo(rotuloFimParticao);
+                this.emitirCarregamentoVariavel(localResultadoParticao);
+                return 'texto()';
             }
+
 
             if (expressao.entidadeChamada.simbolo.lexema === 'encontrar') {
                 if (!this.tipoEhTexto(tipoObjeto)) {
