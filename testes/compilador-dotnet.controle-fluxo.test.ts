@@ -461,6 +461,40 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('stelem.r8');
     });
 
+    it('Acesso por índice em tupla carrega elemento', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = (1, 2, 3)',
+            'escreva(t[1])',
+        ]);
+
+        expect(resultado).toContain('ldelem.i4');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(int32)');
+    });
+
+    it('Atribuição por índice em tupla atualiza elemento', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = (1, 2, 3)',
+            't[1] = 9',
+            'escreva(t[1])',
+        ]);
+
+        expect(resultado).toContain('stelem.i4');
+        expect(resultado).toContain('ldc.i4 9');
+    });
+
+    it('Atribuição de tipo incompatível em tupla falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var t = (1, 2, 3)',
+                't[1] = "texto"',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Tupla com tipos incompatíveis falha na compilação', async () => {
         const compilador = new CompiladorDotnet();
 

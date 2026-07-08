@@ -913,11 +913,15 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                 return this.obterTipoElementoVetor(tipoEntidade);
             }
 
+            if (this.tipoEhTupla(tipoEntidade)) {
+                return this.obterTipoElementoTupla(tipoEntidade);
+            }
+
             if (this.tipoEhDicionario(tipoEntidade)) {
                 return this.obterTiposDicionario(tipoEntidade).valor;
             }
 
-            throw new ErroCompilador('Acesso por índice suportado apenas para vetores e dicionários nesta fase do compilador.');
+            throw new ErroCompilador('Acesso por índice suportado apenas para vetores, tuplas e dicionários nesta fase do compilador.');
         }
         if (construto instanceof AcessoMetodo) {
             const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
@@ -1152,6 +1156,32 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return tipoElemento;
         }
 
+        if (this.tipoEhTupla(tipoEntidade)) {
+            const tipoElemento = this.obterTipoElementoTupla(tipoEntidade);
+            const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+            const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+            if (!this.tipoEhNumerico(tipoIndice)) {
+                throw new ErroCompilador('Índice de tupla deve ser numérico.');
+            }
+
+            await expressao.entidadeChamada.aceitar(this as any);
+            await expressao.indice.aceitar(this as any);
+            if (tipoIndice === 'numero') {
+                throw new ErroCompilador('Índice de tupla deve ser inteiro nesta fase do compilador.');
+            }
+
+            this.instrucoes.push(
+                tipoElementoCil === 'int32' || tipoElementoCil === 'bool'
+                    ? 'ldelem.i4'
+                    : tipoElementoCil === 'float64'
+                      ? 'ldelem.r8'
+                      : tipoElementoCil === 'string'
+                        ? 'ldelem.ref'
+                        : `ldelem ${tipoElementoCil}`
+            );
+            return tipoElemento;
+        }
+
         if (this.tipoEhDicionario(tipoEntidade)) {
             const tipos = this.obterTiposDicionario(tipoEntidade);
             const tipoIndice = this.resolverTipoConstruto(expressao.indice);
@@ -1168,7 +1198,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return tipos.valor;
         }
 
-        throw new ErroCompilador('Acesso por índice suportado apenas para vetores e dicionários nesta fase do compilador.');
+        throw new ErroCompilador('Acesso por índice suportado apenas para vetores, tuplas e dicionários nesta fase do compilador.');
     }
 
     async visitarExpressaoAgrupamento(expressao: Agrupamento): Promise<string> {
@@ -1337,6 +1367,43 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return;
         }
 
+        if (this.tipoEhTupla(tipoObjeto)) {
+            const tipoElemento = this.obterTipoElementoTupla(tipoObjeto);
+            const tipoIndice = this.resolverTipoConstruto(expressao.indice);
+            if (!this.tipoEhNumerico(tipoIndice) || tipoIndice === 'numero') {
+                throw new ErroCompilador('Índice de tupla deve ser inteiro nesta fase do compilador.');
+            }
+
+            const tipoValor = this.resolverTipoConstruto(expressao.valor);
+            const tipoCompativel =
+                tipoValor === tipoElemento || (tipoElemento === 'numero' && tipoValor === 'inteiro');
+            if (!tipoCompativel) {
+                throw new ErroCompilador(
+                    `Não pode atribuir valor do tipo '${tipoValor}' a tupla de elementos '${tipoElemento}'.`
+                );
+            }
+
+            const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+
+            await expressao.objeto.aceitar(this as any);
+            await expressao.indice.aceitar(this as any);
+            await expressao.valor.aceitar(this as any);
+            if (tipoElemento === 'numero' && tipoValor === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push(
+                tipoElementoCil === 'int32' || tipoElementoCil === 'bool'
+                    ? 'stelem.i4'
+                    : tipoElementoCil === 'float64'
+                      ? 'stelem.r8'
+                      : tipoElementoCil === 'string'
+                        ? 'stelem.ref'
+                        : `stelem ${tipoElementoCil}`
+            );
+            return;
+        }
+
         if (this.tipoEhDicionario(tipoObjeto)) {
             const tipos = this.obterTiposDicionario(tipoObjeto);
             const tipoIndice = this.resolverTipoConstruto(expressao.indice);
@@ -1366,7 +1433,7 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return;
         }
 
-        throw new ErroCompilador('Atribuição por índice suportada apenas para vetores e dicionários nesta fase do compilador.');
+        throw new ErroCompilador('Atribuição por índice suportada apenas para vetores, tuplas e dicionários nesta fase do compilador.');
     }
 
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<string> {
