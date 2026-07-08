@@ -684,6 +684,66 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado.match(/WriteLine\(bool\)/g)?.length).toBeGreaterThanOrEqual(3);
     });
 
+    it('Texto inclui compila como alias de Contains', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "Delegua"',
+            'escreva(t.inclui("leg"))',
+        ]);
+
+        expect(resultado).toContain('callvirt instance bool [mscorlib]System.String::Contains(string)');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(bool)');
+    });
+
+    it('Texto encontrar compila para String.IndexOf com e sem índice inicial', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "abcabc"',
+            'escreva(t.encontrar("bc"))',
+            'escreva(t.encontrar("bc", 3))',
+        ]);
+
+        expect(resultado).toContain('callvirt instance int32 [mscorlib]System.String::IndexOf(string)');
+        expect(resultado).toContain('callvirt instance int32 [mscorlib]System.String::IndexOf(string, int32)');
+        expect(resultado.match(/WriteLine\(int32\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Texto dividir aceita delimitador e limite opcional', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "a,b,c"',
+            'escreva(t.dividir(",")[1])',
+            'escreva(t.dividir(",", 2)[1])',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string[] [mscorlib]System.String::Split(char[])');
+        expect(resultado).toContain('callvirt instance string[] [mscorlib]System.String::Split(char[], int32)');
+        expect(resultado.match(/ldelem\.ref/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Texto apararInicio e apararFim compilam para TrimStart/TrimEnd', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "  Delegua  "',
+            'escreva(t.apararInicio())',
+            'escreva(t.apararFim())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::TrimStart()');
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::TrimEnd()');
+    });
+
+    it('Texto encontrar com índice não inteiro falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var t = "abcabc"',
+                'escreva(t.encontrar("bc", 1.5))',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Texto aparar compila para String.Trim', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
