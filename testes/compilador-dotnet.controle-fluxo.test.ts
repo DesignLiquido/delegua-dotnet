@@ -1,4 +1,5 @@
 /// <reference types="jest" />
+import { FormatacaoEscrita, Literal } from '@designliquido/delegua';
 import { CompiladorDotnet } from '../fontes/compilador-dotnet';
 import { ErroCompilador } from '../fontes/erros/erro-compilador';
 
@@ -627,6 +628,33 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
                 'escreva(t.substituir(1, "x"))',
             ])
         ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('FormatacaoEscrita aplica casas decimais e espaços', async () => {
+        const compilador: any = new CompiladorDotnet();
+        compilador.instrucoes = [];
+        compilador.variaveis = new Map();
+        compilador.locaisTemporarios = [];
+        compilador.proximoIndiceLocal = 0;
+        compilador.proximoRotulo = 0;
+        compilador.pilhaRotulosLoop = [];
+        compilador.funcoes = new Map();
+        compilador.classes = new Map();
+        compilador.metodosCompilados = [];
+        compilador.classesCompiladas = [];
+        compilador.funcaoAtual = null;
+        compilador.classeAtual = null;
+        compilador.metodoClasseAtual = null;
+
+        const expressao = new FormatacaoEscrita(-1, 1, new Literal(-1, 1, 12.345, 'número'), 2, 2);
+        const tipo = await compilador.visitarExpressaoFormatacaoEscrita(expressao);
+
+        expect(tipo).toBe('texto');
+        const il = compilador.instrucoes.join('\n');
+        expect(il).toContain('ldstr "F2"');
+        expect(il).toContain('System.Double::ToString(string)');
+        expect(il).toContain('ldstr "  "');
+        expect(il).toContain('System.String::Concat(string, string)');
     });
 
     it('Tamanho de texto funciona como método e propriedade', async () => {

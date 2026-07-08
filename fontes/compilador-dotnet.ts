@@ -17,6 +17,7 @@ import {
     Escolha,
     Escreva,
     Expressao,
+    FormatacaoEscrita,
     FuncaoDeclaracao,
     Isto,
     Lexador,
@@ -385,6 +386,24 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
     private emitirArmazenamentoVariavel(local: VariavelLocal): void {
         this.instrucoes.push(`${local.armazenamento === 'argumento' ? 'starg' : 'stloc'} ${local.indice}`);
+    }
+
+    private emitirConversaoParaTexto(tipoDelegua: string): void {
+        switch (tipoDelegua) {
+            case 'texto':
+                return;
+            case 'inteiro':
+                this.instrucoes.push('call instance string [mscorlib]System.Int32::ToString()');
+                return;
+            case 'numero':
+                this.instrucoes.push('call instance string [mscorlib]System.Double::ToString()');
+                return;
+            case 'logico':
+                this.instrucoes.push('call instance string [mscorlib]System.Boolean::ToString()');
+                return;
+            default:
+                this.instrucoes.push('callvirt instance string [mscorlib]System.Object::ToString()');
+        }
     }
 
     private tiposCompativeisParaIgualdade(tipoEsquerdo: string, tipoDireito: string): boolean {
@@ -831,6 +850,9 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             const tipoChave = this.resolverTipoPrimitivoHomogeneo(construto.chaves, 'dicionário');
             const tipoValor = this.resolverTipoPrimitivoHomogeneo(construto.valores, 'dicionário');
             return this.criarTipoDicionario(tipoChave, tipoValor);
+        }
+        if (construto instanceof FormatacaoEscrita) {
+            return 'texto';
         }
         if (construto instanceof Variavel) {
             const local = this.variaveis.get(construto.simbolo.lexema);
@@ -2397,6 +2419,29 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         this.instrucoes.push('ret');
+    }
+
+    async visitarExpressaoFormatacaoEscrita(expressao: FormatacaoEscrita): Promise<string> {
+        const tipoConteudo = this.resolverTipoConstruto(expressao.expressao);
+        await expressao.expressao.aceitar(this as any);
+
+        if (this.tipoEhNumerico(tipoConteudo) && expressao.casasDecimais > 0) {
+            if (tipoConteudo === 'inteiro') {
+                this.instrucoes.push('conv.r8');
+            }
+
+            this.instrucoes.push(`ldstr "F${expressao.casasDecimais}"`);
+            this.instrucoes.push('call instance string [mscorlib]System.Double::ToString(string)');
+        } else {
+            this.emitirConversaoParaTexto(tipoConteudo);
+        }
+
+        if (expressao.espacos > 0) {
+            this.instrucoes.push(`ldstr "${' '.repeat(expressao.espacos)}"`);
+            this.instrucoes.push('call string [mscorlib]System.String::Concat(string, string)');
+        }
+
+        return 'texto';
     }
 
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
