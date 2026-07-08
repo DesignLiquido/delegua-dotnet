@@ -583,6 +583,52 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         ).rejects.toThrow(ErroCompilador);
     });
 
+    it('Texto maiusculo e minusculo compilam para ToUpper/ToLower', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "DeLeGuA"',
+            'escreva(t.maiusculo())',
+            'escreva(t.minusculo())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::ToUpper()');
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::ToLower()');
+        expect(resultado.match(/WriteLine\(string\)/g)?.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Texto substituir compila para String.Replace', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "Delegua"',
+            'escreva(t.substituir("gua", "dotnet"))',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string [mscorlib]System.String::Replace(string, string)');
+    });
+
+    it('Texto divida compila para String.Split e retorna array de texto', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var t = "a,b,c"',
+            'escreva(t.divida(",")[1])',
+        ]);
+
+        expect(resultado).toContain('callvirt instance string[] [mscorlib]System.String::Split(char[])');
+        expect(resultado).toContain('ldelem.ref');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(string)');
+    });
+
+    it('Texto substituir com argumentos não-texto falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var t = "Delegua"',
+                'escreva(t.substituir(1, "x"))',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Classe com construtor e método de instância compila', async () => {
         const compilador = new CompiladorDotnet();
         const resultado = await compilador.compilar([
