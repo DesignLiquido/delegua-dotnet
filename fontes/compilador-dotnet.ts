@@ -27,6 +27,7 @@ import {
     Para,
     Retorna,
     Se,
+    Super,
     TuplaN,
     Unario,
     Var,
@@ -869,6 +870,18 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             return this.classeAtual.nome;
         }
 
+        if (construto instanceof Super) {
+            if (!this.classeAtual) {
+                throw new ErroCompilador("'super' só pode ser usado dentro de métodos de classe.");
+            }
+
+            if (!this.classeAtual.superClasseNome) {
+                throw new ErroCompilador("'super' só pode ser usado em classes com herança.");
+            }
+
+            return this.classeAtual.superClasseNome;
+        }
+
         if (construto instanceof Literal) {
             // O parser marca todo literal numérico genericamente como 'número',
             // mesmo quando o valor é um inteiro (ex.: `123`). Por isso o valor
@@ -1120,6 +1133,14 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
             }
 
             if (!(construto.entidadeChamada instanceof Variavel)) {
+                if (construto.entidadeChamada instanceof Super) {
+                    if (construto.argumentos.length !== 0) {
+                        throw new ErroCompilador("'super()' não aceita argumentos nesta fase do compilador.");
+                    }
+
+                    return this.resolverTipoConstruto(construto.entidadeChamada);
+                }
+
                 throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
             }
 
@@ -2568,6 +2589,16 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         if (!(expressao.entidadeChamada instanceof Variavel)) {
+            if (expressao.entidadeChamada instanceof Super) {
+                if (expressao.argumentos.length !== 0) {
+                    throw new ErroCompilador("'super()' não aceita argumentos nesta fase do compilador.");
+                }
+
+                const tipoSuper = this.resolverTipoConstruto(expressao.entidadeChamada);
+                this.instrucoes.push('ldarg 0');
+                return tipoSuper;
+            }
+
             throw new ErroCompilador('Chamada suportada apenas para funções nomeadas nesta fase do compilador.');
         }
 
@@ -2708,6 +2739,19 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
         this.instrucoes.push('ldarg 0');
         return this.classeAtual.nome;
+    }
+
+    async visitarExpressaoSuper(expressao: Super): Promise<string> {
+        if (!this.classeAtual || !this.metodoClasseAtual) {
+            throw new ErroCompilador("'super' só pode ser usado dentro de métodos de classe.");
+        }
+
+        if (!this.classeAtual.superClasseNome) {
+            throw new ErroCompilador("'super' só pode ser usado em classes com herança.");
+        }
+
+        this.instrucoes.push('ldarg 0');
+        return this.classeAtual.superClasseNome;
     }
 
     async visitarExpressaoDefinirValor(expressao: DefinirValor): Promise<any> {

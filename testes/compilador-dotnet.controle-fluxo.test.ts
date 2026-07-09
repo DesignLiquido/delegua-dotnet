@@ -1036,6 +1036,58 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('callvirt instance string class Base::falar()');
     });
 
+    it('super.falar() resolve chamada para implementação da classe base', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Base {',
+            '  construtor() {}',
+            '  valor(): inteiro { retorna 1 }',
+            '}',
+            'classe Derivada herda Base {',
+            '  valor(): inteiro { retorna 2 }',
+            '  valorBase(): inteiro { retorna super.valor() }',
+            '}',
+            'var d = Derivada()',
+            'escreva(d.valorBase())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance int32 class Base::valor()');
+        expect(resultado).toContain('call void [mscorlib]System.Console::WriteLine(int32)');
+    });
+
+    it('super().metodo() funciona como alias para instância base tipada', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'classe Base {',
+            '  construtor() {}',
+            '  valor(): inteiro { retorna 7 }',
+            '}',
+            'classe Derivada herda Base {',
+            '  valorBase(): inteiro { retorna super().valor() }',
+            '}',
+            'var d = Derivada()',
+            'escreva(d.valorBase())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance int32 class Base::valor()');
+    });
+
+    it('Uso de super() com argumentos falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'classe Base {',
+                '  construtor() {}',
+                '  valor(): inteiro { retorna 1 }',
+                '}',
+                'classe Derivada herda Base {',
+                '  valorBase(): inteiro { retorna super(1).valor() }',
+                '}',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
     it('Herança com construtor da base com parâmetros falha nesta fase', async () => {
         const compilador = new CompiladorDotnet();
 
