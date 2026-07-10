@@ -2,6 +2,7 @@ import {
     AcessoMetodo,
     AcessoMetodoOuPropriedade,
     AcessoIndiceVariavel,
+    AcessoIntervaloVariavel,
     AtribuicaoPorIndice,
     Agrupamento,
     Atribuir,
@@ -1172,6 +1173,11 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
 
             throw new ErroCompilador('Acesso por índice suportado apenas para vetores, tuplas e dicionários nesta fase do compilador.');
         }
+        if (construto instanceof AcessoIntervaloVariavel) {
+            // Intervalo sempre retorna um vetor (array), mesmo que acesse vetor
+            // Ex: inteiro[] com [1:3] retorna inteiro[]
+            return construto.tipo; // tipo já contém [] no final
+        }
         if (construto instanceof AcessoMetodo) {
             const tipoObjeto = this.resolverTipoConstruto(construto.objeto);
             switch (construto.nomeMetodo) {
@@ -1451,6 +1457,70 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
         }
 
         throw new ErroCompilador('Acesso por índice suportado apenas para vetores, tuplas e dicionários nesta fase do compilador.');
+    }
+
+    async visitarExpressaoAcessoIntervaloVariavel(expressao: any): Promise<string> {
+        const tipoEntidade = this.resolverTipoConstruto(expressao.entidadeChamada);
+        
+        if (!this.tipoEhVetor(tipoEntidade)) {
+            throw new ErroCompilador('Acesso por intervalo suportado apenas para vetores nesta fase do compilador.');
+        }
+
+        const tipoElemento = this.obterTipoElementoVetor(tipoEntidade);
+        const tipoVetorCil = this.mapearTipoVetorCil(tipoElemento);
+        const tipoElementoCil = this.mapearTipoElementoCil(tipoElemento);
+
+        // Para intervalo, geramos: List<T>.GetRange(inicio, count)
+        // que retorna um novo List<T> com os elementos do intervalo
+        
+        await expressao.entidadeChamada.aceitar(this as any); // Carrega o vetor
+        
+        // Emit start index (or 0 if null)
+        if (expressao.indiceInicio) {
+            await expressao.indiceInicio.aceitar(this as any);
+            // Ensure it's int32
+            const tipoInicio = this.resolverTipoConstruto(expressao.indiceInicio);
+            if (tipoInicio === 'numero') {
+                throw new ErroCompilador('Índice de intervalo deve ser inteiro.');
+            }
+        } else {
+            this.instrucoes.push('ldc.i4.0'); // Default start = 0
+        }
+
+        // Emit count (fim - inicio, or Length - inicio if fim is null)
+        if (expressao.indiceFim) {
+            // count = fim - inicio
+            // If inicio is null, we already have 0 on stack, so we need fim
+            if (expressao.indiceInicio) {
+                // We have: [..., vetor, inicio] -> need [..., vetor, inicio, (fim - inicio)]
+                this.instrucoes.push('dup'); // Duplicate inicio
+            } else {
+                // We have: [..., vetor, 0] -> need [..., vetor, 0, fim]
+                this.instrucoes.push('pop'); // Remove the 0
+                this.instrucoes.push('ldc.i4.0'); // Push 0 again
+                this.instrucoes.push('swap'); // Swap to get vetor on top
+            }
+            
+            // Push fim
+            await expressao.indiceFim.aceitar(this as any);
+            
+            if (expressao.indiceInicio) {
+                this.instrucoes.push('sub'); // fim - inicio
+            }
+        } else {
+            // count = Length - inicio
+            this.instrucoes.push('dup'); // Duplicate vetor reference
+            this.instrucoes.push(`callvirt instance int32 ${tipoVetorCil}::get_Count()`);
+            if (expressao.indiceInicio) {
+                this.instrucoes.push('sub'); // Length - inicio
+            }
+        }
+
+        // Call GetRange(start, count)
+        this.instrucoes.push(`callvirt instance ${tipoVetorCil} ${tipoVetorCil}::GetRange(int32, int32)`);
+
+        // Return type is the array type (e.g., inteiro[] if it was inteiro[])
+        return expressao.tipo; // tipo already includes []
     }
 
     async visitarExpressaoAgrupamento(expressao: Agrupamento): Promise<string> {
@@ -3309,7 +3379,12 @@ export class CompiladorDotnet extends VisitanteBaseNaoImplementado {
                     this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(object)');
                     break;
                 default:
-                    throw new ErroCompilador(`Não sabe como escrever valor de tipo '${tipo}'.`);
+                    // Tipos de array (vetor) - sempre usam WriteLine(object) para imprimir a coleção
+                    if (tipo.endsWith('[]')) {
+                        this.instrucoes.push('call void [mscorlib]System.Console::WriteLine(object)');
+                    } else {
+                        throw new ErroCompilador(`Não sabe como escrever valor de tipo '${tipo}'.`);
+                    }
             }
         }
     }

@@ -1140,4 +1140,105 @@ describe('CompiladorDotnet - Controle de fluxo', () => {
         expect(resultado).toContain('ceq');
         expect(resultado).toContain('ldc.i4 7');
     });
+
+    it('Intervalo simples [1:3] em vetor retorna novo vetor', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2, 3, 4, 5]',
+            'var intervalo = v[1:3]',
+            'escreva(intervalo.tamanho())',
+        ]);
+
+        expect(resultado).toContain('callvirt instance class [mscorlib]System.Collections.Generic.List`1<int32> class [mscorlib]System.Collections.Generic.List`1<int32>::GetRange(int32, int32)');
+        expect(resultado).toContain('ldc.i4 1');
+        expect(resultado).toContain('ldc.i4 2');
+    });
+
+    it('Intervalo com início omitido [:3] começa no índice 0', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2, 3, 4, 5]',
+            'var intervalo = v[:3]',
+            'escreva(intervalo.tamanho())',
+        ]);
+
+        expect(resultado).toContain('ldc.i4.0');
+        expect(resultado).toContain('ldc.i4 3');
+        expect(resultado).toContain('callvirt instance class [mscorlib]System.Collections.Generic.List`1<int32> class [mscorlib]System.Collections.Generic.List`1<int32>::GetRange(int32, int32)');
+    });
+
+    it('Intervalo com fim omitido [1:] vai até o final do vetor', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2, 3, 4, 5]',
+            'var intervalo = v[1:]',
+            'escreva(intervalo.tamanho())',
+        ]);
+
+        expect(resultado).toContain('ldc.i4 1');
+        expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.List`1<int32>::get_Count()');
+        expect(resultado).toContain('sub');
+        expect(resultado).toContain('callvirt instance class [mscorlib]System.Collections.Generic.List`1<int32> class [mscorlib]System.Collections.Generic.List`1<int32>::GetRange(int32, int32)');
+    });
+
+    it('Intervalo completo [:] retorna cópia do vetor inteiro', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var v = [1, 2, 3, 4, 5]',
+            'var intervalo = v[:]',
+            'escreva(intervalo.tamanho())',
+        ]);
+
+        expect(resultado).toContain('ldc.i4.0');
+        expect(resultado).toContain('callvirt instance int32 class [mscorlib]System.Collections.Generic.List`1<int32>::get_Count()');
+        expect(resultado).toContain('callvirt instance class [mscorlib]System.Collections.Generic.List`1<int32> class [mscorlib]System.Collections.Generic.List`1<int32>::GetRange(int32, int32)');
+    });
+
+    it('Intervalo em vetor de texto compila com tipo correto', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var palavras = ["a", "b", "c", "d"]',
+            'var subLista = palavras[1:3]',
+            'escreva(subLista[0])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.List`1<string>');
+        expect(resultado).toContain('GetRange(int32, int32)');
+        expect(resultado).toContain('callvirt instance string class [mscorlib]System.Collections.Generic.List`1<string>::get_Item(int32)');
+    });
+
+    it('Intervalo não suportado para tuplas falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var t = (1, 2, 3, 4, 5)',
+                'var intervalo = t[1:3]',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Intervalo não suportado para dicionários falha na compilação', async () => {
+        const compilador = new CompiladorDotnet();
+
+        await expect(
+            compilador.compilar([
+                'var mapa = { 1: "a", 2: "b" }',
+                'var intervalo = mapa[1:2]',
+            ])
+        ).rejects.toThrow(ErroCompilador);
+    });
+
+    it('Intervalo em vetor numérico misto funciona com promoção', async () => {
+        const compilador = new CompiladorDotnet();
+        const resultado = await compilador.compilar([
+            'var numeros = [1, 2.5, 3, 4.5, 5]',
+            'var intervalo = numeros[1:3]',
+            'escreva(intervalo[0])',
+        ]);
+
+        expect(resultado).toContain('System.Collections.Generic.List`1<float64>');
+        expect(resultado).toContain('GetRange(int32, int32)');
+        expect(resultado).toContain('callvirt instance float64 class [mscorlib]System.Collections.Generic.List`1<float64>::get_Item(int32)');
+    });
 });

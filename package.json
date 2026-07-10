@@ -28,7 +28,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@designliquido/delegua": "^1.25.1",
+    "@designliquido/delegua": "^1.26.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {
